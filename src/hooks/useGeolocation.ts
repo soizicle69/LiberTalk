@@ -50,24 +50,31 @@ export const useGeolocation = () => {
     setLoading(true);
     setError(null);
 
+    // Timeout promise for geolocation
+    const timeoutPromise = new Promise<never>((_, reject) => {
+      setTimeout(() => reject(new Error('Geolocation timeout')), 5000);
+    });
+
     try {
       // Check if geolocation is supported
       if (!('geolocation' in navigator)) {
         throw new Error('Geolocation is not supported by this browser');
       }
 
-      // Request high-accuracy location
-      const position = await new Promise<GeolocationPosition>((resolve, reject) => {
+      // Request location with 5s timeout using Promise.race
+      const locationPromise = new Promise<GeolocationPosition>((resolve, reject) => {
         navigator.geolocation.getCurrentPosition(
           resolve,
           reject,
           {
-            enableHighAccuracy: true,
-            timeout: 15000,
-            maximumAge: 300000, // 5 minutes cache
+            enableHighAccuracy: false, // Faster response
+            timeout: 4000, // 4s internal timeout
+            maximumAge: 600000, // 10 minutes cache
           }
         );
       });
+
+      const position = await Promise.race([locationPromise, timeoutPromise]);
 
       const { latitude, longitude, accuracy } = position.coords;
       const continent = getContinent(latitude, longitude);

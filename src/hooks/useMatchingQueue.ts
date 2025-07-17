@@ -244,18 +244,16 @@ export const useMatchingQueue = (language: string) => {
       
       console.log('🚀 Joining waiting queue with device:', deviceIdRef.current);
 
-      // Get location with fallback
-      let locationData = location;
-      if (!locationData) {
-        try {
-          console.log('📍 Requesting location for better matching...');
-          locationData = await requestLocation();
-          console.log('📍 Location obtained:', locationData?.continent, locationData?.country, locationData?.city);
-        } catch (geoError) {
-          console.warn('📍 Geolocation failed, using IP-based location:', geoError);
-          // Will use IP-based location in the function
-        }
-      }
+      // Use provided location or fallback to global
+      const locationData = location || {
+        continent: 'Unknown',
+        country: 'Unknown', 
+        city: 'Unknown',
+        latitude: null,
+        longitude: null
+      };
+      
+      console.log('📍 Using location data:', locationData.continent, locationData.country, locationData.city);
 
       // Join waiting queue
       const { data, error } = await supabase.rpc('join_waiting_queue', {
@@ -294,13 +292,11 @@ export const useMatchingQueue = (language: string) => {
       startWaitTimer();
       startMaintenanceIntervals(data.user_id, data.session_id);
       
-      // Start search process with initial delay
+      // Start search process immediately - no delay
       console.log('🔍 Starting search process...');
-      setTimeout(() => {
-        if (isActiveRef.current) {
-          startSearchProcess(data.user_id);
-        }
-      }, Math.max(5000, Math.min(data.estimated_wait_seconds * 1000, 15000))); // 5-15s initial delay
+      if (isActiveRef.current) {
+        startSearchProcess(data.user_id);
+      }
       
       // Initial stats update
       updateQueueStats();
@@ -312,8 +308,16 @@ export const useMatchingQueue = (language: string) => {
       setIsSearching(false);
       isActiveRef.current = false;
       stopAllIntervals();
+      
+      // Auto-retry after 3 seconds on failure
+      setTimeout(() => {
+        if (isActiveRef.current) {
+          console.log('🔄 Auto-retrying queue join...');
+          joinQueue(userId, previousMatches);
+        }
+      }, 3000);
     }
-  }, [location, requestLocation, language, startWaitTimer, startMaintenanceIntervals, updateQueueStats]);
+  }, [location, language, startWaitTimer, startMaintenanceIntervals, updateQueueStats]);
 
   // Enhanced search process with intelligent retry logic
   const startSearchProcess = useCallback((userId: string) => {
@@ -359,8 +363,8 @@ export const useMatchingQueue = (language: string) => {
         if (isActiveRef.current) {
           consecutiveFailures = 0; // Reset on successful search (even if no match)
           
-          const retryDelay = data?.retry_in_seconds ? data.retry_in_seconds * 1000 : 
-                           Math.min(3000 + (attemptCount * 500), 10000); // Progressive delay, max 10s
+          // Faster retry for better responsiveness
+          const retryDelay = Math.min(2000 + (attemptCount * 300), 5000); // 2-5s max
           
           console.log(`⏳ No match found, retrying in ${retryDelay/1000}s (attempt ${attemptCount})`);
           
@@ -382,8 +386,8 @@ export const useMatchingQueue = (language: string) => {
         consecutiveFailures++;
         
         if (isActiveRef.current) {
-          // Progressive backoff on consecutive failures
-          const backoffDelay = Math.min(2000 * Math.pow(1.5, consecutiveFailures), 15000);
+          // Faster backoff for better user experience
+          const backoffDelay = Math.min(1000 * Math.pow(1.3, consecutiveFailures), 8000);
           console.log(`🔄 Retrying search in ${backoffDelay/1000}s (failure ${consecutiveFailures})`);
           
           setError(`🔄 Connection issue, retrying... (attempt ${attemptCount})`);

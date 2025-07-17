@@ -230,28 +230,52 @@ export const useSupabaseChat = (language: string) => {
     setConnectionError(null);
     setSearchStatus({ 
       phase: 'joining', 
-      message: '🌍 Getting your location for better matching...' 
+      message: '🚀 Starting chat...' 
     });
 
     try {
       console.log('🚀 Starting chat initialization...');
       
+      // Try to get location with 5s timeout - non-blocking
       try {
-        locationData = await requestLocation();
-        console.log('📍 Location obtained successfully');
-      } catch (geoError) {
-        console.warn('Geolocation failed, using IP fallback:', geoError);
         setSearchStatus({ 
           phase: 'joining', 
-          message: '🌐 Using IP-based location for matching...' 
+          message: '📍 Getting location (5s max)...' 
+        });
+        
+        // Race between location request and 5s timeout
+        const locationPromise = requestLocation();
+        const timeoutPromise = new Promise<null>((resolve) => {
+          setTimeout(() => resolve(null), 5000);
+        });
+        
+        locationData = await Promise.race([locationPromise, timeoutPromise]);
+        
+        if (locationData) {
+          console.log('📍 Location obtained successfully:', locationData.continent, locationData.country);
+        } else {
+          console.log('📍 Location timeout - proceeding with global matching');
+        }
+      } catch (geoError) {
+        console.warn('📍 Geolocation failed, trying IP fallback:', geoError);
+        setSearchStatus({ 
+          phase: 'joining', 
+          message: '🌐 Trying IP location...' 
         });
         
         // IP geolocation fallback
         try {
-          const response = await fetch('https://ipapi.co/json/');
-          const ipData = await response.json();
+          const ipPromise = fetch('https://ipapi.co/json/', { 
+            signal: AbortSignal.timeout(3000) 
+          }).then(r => r.json());
           
-          if (!ipData.error && ipData.latitude) {
+          const ipTimeoutPromise = new Promise<null>((resolve) => {
+            setTimeout(() => resolve(null), 3000);
+          });
+          
+          const ipData = await Promise.race([ipPromise, ipTimeoutPromise]);
+          
+          if (ipData && !ipData.error && ipData.latitude) {
             locationData = {
               latitude: ipData.latitude,
               longitude: ipData.longitude,
@@ -265,6 +289,9 @@ export const useSupabaseChat = (language: string) => {
               region: ipData.region || 'Unknown',
               city: ipData.city || 'Unknown',
             };
+            console.log('📍 IP location obtained:', locationData.continent, locationData.country);
+          } else {
+            console.log('📍 IP location failed or timeout');
           }
         } catch (ipError) {
           console.warn('IP geolocation failed:', ipError);
@@ -281,13 +308,19 @@ export const useSupabaseChat = (language: string) => {
           city: 'Unknown',
         };
       }
+      
+      // Always proceed to user initialization - never block on location
+      setSearchStatus({ 
+        phase: 'joining', 
+        message: '👤 Initializing user session...' 
+      });
 
       const user = await initializeUser(locationData);
       if (user) {
         console.log('👤 User initialized, joining waiting queue...');
         setSearchStatus({ 
           phase: 'joining', 
-          message: '🚀 Joining waiting queue...' 
+          message: '🔄 Joining waiting queue...' 
         });
         // Join matching queue
         await joinQueue(user.id, user.previous_matches || []);

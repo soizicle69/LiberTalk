@@ -200,12 +200,39 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
             </p>
           )}
           
+          {/* Dynamic progress indicator */}
+          <div className="mb-4">
+            {searchStatus.phase === 'joining' && (
+              <div className="w-full bg-gray-200 dark:bg-gray-700 rounded-full h-2">
+                <div className="bg-blue-500 h-2 rounded-full animate-pulse" style={{ width: '60%' }}></div>
+              </div>
+            )}
+            {searchStatus.phase === 'searching' && (
+              <div className="flex items-center justify-center gap-1">
+                <div className="w-2 h-2 bg-blue-500 rounded-full animate-bounce" style={{ animationDelay: '0ms' }}></div>
+                <div className="w-2 h-2 bg-blue-500 rounded-full animate-bounce" style={{ animationDelay: '150ms' }}></div>
+                <div className="w-2 h-2 bg-blue-500 rounded-full animate-bounce" style={{ animationDelay: '300ms' }}></div>
+              </div>
+            )}
+          </div>
+          
           {/* Progress indicators */}
           {searchStatus.phase === 'searching' && (
             <div className="space-y-2">
+              {/* Timer display */}
               {waitTime > 0 && (
-                <p className="text-sm text-blue-600 dark:text-blue-400">
-                  Searching for {Math.floor(waitTime / 60)}:{(waitTime % 60).toString().padStart(2, '0')}
+                <div className="text-sm text-blue-600 dark:text-blue-400 font-mono">
+                  <div className="inline-flex items-center gap-2">
+                    <div className="w-2 h-2 bg-blue-500 rounded-full animate-pulse"></div>
+                    {Math.floor(waitTime / 60)}:{(waitTime % 60).toString().padStart(2, '0')}
+                  </div>
+                </div>
+              )}
+              
+              {/* Queue position */}
+              {queuePosition !== null && (
+                <p className="text-xs text-gray-500 dark:text-slate-400">
+                  Position in queue: #{queuePosition + 1}
                 </p>
               )}
               
@@ -217,6 +244,13 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
                     <p>Connection quality: {connectionQuality}%</p>
                   )}
                 </div>
+              )}
+              
+              {/* Encouraging message for long waits */}
+              {waitTime > 30 && (
+                <p className="text-xs text-green-600 dark:text-green-400 animate-pulse">
+                  🌟 Hang tight! We're finding the perfect match for you...
+                </p>
               )}
             </div>
           )}
