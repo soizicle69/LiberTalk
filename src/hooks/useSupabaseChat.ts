@@ -298,12 +298,13 @@ export const useSupabaseChat = (language: string) => {
       let deviceId;
       try {
         deviceId = localStorage.getItem('libertalk_device_id') || 
-                   crypto.randomUUID?.() || 
+                   (typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : null) ||
                    Math.random().toString(36).substring(2);
         localStorage.setItem('libertalk_device_id', deviceId);
       } catch (storageError) {
         console.warn('⚠️ localStorage not available, using session-only ID');
-        deviceId = crypto.randomUUID?.() || Math.random().toString(36).substring(2);
+        deviceId = (typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : null) ||
+                   Math.random().toString(36).substring(2);
       }
       
       const userData = {
