@@ -30,6 +30,23 @@ export const useSupabaseChat = (language: string) => {
   const retryTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const heartbeatRef = useRef<NodeJS.Timeout | null>(null);
 
+  // Use matching queue - moved before functions that depend on it
+  const {
+    isInQueue,
+    isSearching,
+    waitTime,
+    queueStats,
+    matchResult,
+    error: queueError,
+    searchAttempts,
+    connectionQuality,
+    queuePosition,
+    estimatedWait,
+    joinQueue,
+    leaveQueue,
+    handleDisconnectReconnect,
+  } = useMatchingQueue(language);
+
   // Skip partner with error handling (moved before handleUserDisconnected)
   const skipPartner = useCallback(async () => {
     if (!currentChat || !currentUser || !isActiveRef.current) return;
@@ -73,23 +90,6 @@ export const useSupabaseChat = (language: string) => {
       handleError(error, 'skipPartner');
     }
   }, [currentChat, currentUser, leaveQueue, joinQueue, handleError]);
-
-  // Use matching queue
-  const {
-    isInQueue,
-    isSearching,
-    waitTime,
-    queueStats,
-    matchResult,
-    error: queueError,
-    searchAttempts,
-    connectionQuality,
-    queuePosition,
-    estimatedWait,
-    joinQueue,
-    leaveQueue,
-    handleDisconnectReconnect,
-  } = useMatchingQueue(language);
 
   // Global error handler
   const handleError = useCallback((error: any, context: string, canRetry: boolean = true) => {
