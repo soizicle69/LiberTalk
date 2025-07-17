@@ -30,6 +30,50 @@ export const useSupabaseChat = (language: string) => {
   const retryTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const heartbeatRef = useRef<NodeJS.Timeout | null>(null);
 
+  // Skip partner with error handling (moved before handleUserDisconnected)
+  const skipPartner = useCallback(async () => {
+    if (!currentChat || !currentUser || !isActiveRef.current) return;
+
+    try {
+      console.log('⏭️ Skipping partner...');
+      
+      const { error } = await supabase.rpc('end_chat_session', {
+        p_user_id: currentUser.id,
+        p_chat_id: currentChat.chat_id
+      });
+      
+      if (error) {
+        console.error('💾 Supabase insert error:', error);
+        console.warn('⚠️ Error ending chat session:', error);
+        // Fallback to direct update
+        await supabase
+        .from('chat_sessions')
+        .update({ status: 'ended', ended_at: new Date().toISOString() })
+        .eq('chat_id', currentChat.chat_id);
+      }
+
+      await leaveQueue();
+      
+      setCurrentChat(null);
+      setPartnerId(null);
+      setPartnerLocation(null);
+      setIsConnected(false);
+      setMessages([]);
+      setShowNextButton(false);
+      setNextButtonCountdown(0);
+      setAppState({ phase: 'idle', message: '' });
+
+      // Rejoin queue for new match
+      setTimeout(async () => {
+        if (isActiveRef.current) {
+          await joinQueue(currentUser.id, currentUser.previous_matches || []);
+        }
+      }, 500);
+    } catch (error) {
+      handleError(error, 'skipPartner');
+    }
+  }, [currentChat, currentUser, leaveQueue, joinQueue, handleError]);
+
   // Use matching queue
   const {
     isInQueue,
@@ -595,50 +639,6 @@ export const useSupabaseChat = (language: string) => {
       handleError(error, 'sendMessage', false);
     }
   }, [currentChat, currentUser, broadcastMessage, handleError]);
-
-  // Skip partner with error handling
-  const skipPartner = useCallback(async () => {
-    if (!currentChat || !currentUser || !isActiveRef.current) return;
-
-    try {
-      console.log('⏭️ Skipping partner...');
-      
-      const { error } = await supabase.rpc('end_chat_session', {
-        p_user_id: currentUser.id,
-        p_chat_id: currentChat.chat_id
-      });
-      
-      if (error) {
-        console.error('💾 Supabase insert error:', error);
-        console.warn('⚠️ Error ending chat session:', error);
-        // Fallback to direct update
-        await supabase
-        .from('chat_sessions')
-        .update({ status: 'ended', ended_at: new Date().toISOString() })
-        .eq('chat_id', currentChat.chat_id);
-      }
-
-      await leaveQueue();
-      
-      setCurrentChat(null);
-      setPartnerId(null);
-      setPartnerLocation(null);
-      setIsConnected(false);
-      setMessages([]);
-      setShowNextButton(false);
-      setNextButtonCountdown(0);
-      setAppState({ phase: 'idle', message: '' });
-
-      // Rejoin queue for new match
-      setTimeout(async () => {
-        if (isActiveRef.current) {
-          await joinQueue(currentUser.id, currentUser.previous_matches || []);
-        }
-      }, 500);
-    } catch (error) {
-      handleError(error, 'skipPartner');
-    }
-  }, [currentChat, currentUser, leaveQueue, joinQueue, handleError]);
 
   // Handle next button click
   const handleNextClick = useCallback(async () => {
