@@ -227,7 +227,7 @@ export const useMatchingQueue = (language: string) => {
 
   // Join queue with enhanced error handling and logging
   const joinQueue = useCallback(async (userId?: string, previousMatches: string[] = []) => {
-    if (isActiveRef.current && !userId) {
+    if (isInQueue && !userId) {
       console.log('🔄 Already in queue, skipping join...');
       return;
     }
@@ -242,7 +242,7 @@ export const useMatchingQueue = (language: string) => {
       setEstimatedWait(null);
       isActiveRef.current = true;
       
-      console.log('🚀 Joining waiting queue with device:', deviceIdRef.current);
+      console.log('🚀 Joining waiting queue immediately with device:', deviceIdRef.current);
 
       // Use provided location or fallback to global
       const locationData = location || {
@@ -292,8 +292,8 @@ export const useMatchingQueue = (language: string) => {
       startWaitTimer();
       startMaintenanceIntervals(data.user_id, data.session_id);
       
-      // Start search process immediately - no delay
-      console.log('🔍 Starting search process...');
+      // Start search process immediately
+      console.log('🔍 Starting immediate search process...');
       if (isActiveRef.current) {
         startSearchProcess(data.user_id);
       }
@@ -309,13 +309,13 @@ export const useMatchingQueue = (language: string) => {
       isActiveRef.current = false;
       stopAllIntervals();
       
-      // Auto-retry after 3 seconds on failure
+      // Auto-retry after 2 seconds on failure
       setTimeout(() => {
-        if (isActiveRef.current) {
+        if (!isInQueue) { // Only retry if not already in queue
           console.log('🔄 Auto-retrying queue join...');
           joinQueue(userId, previousMatches);
         }
-      }, 3000);
+      }, 2000);
     }
   }, [location, language, startWaitTimer, startMaintenanceIntervals, updateQueueStats]);
 
@@ -323,10 +323,15 @@ export const useMatchingQueue = (language: string) => {
   const startSearchProcess = useCallback((userId: string) => {
     let attemptCount = 0;
     let consecutiveFailures = 0;
+    let searchInterval: NodeJS.Timeout | null = null;
     
     const performSearch = async () => {
       if (!isActiveRef.current) {
         console.log('🛑 Search stopped - not active');
+        if (searchInterval) {
+          clearInterval(searchInterval);
+          searchInterval = null;
+        }
         return;
       }
 
@@ -354,6 +359,12 @@ export const useMatchingQueue = (language: string) => {
           consecutiveFailures = 0;
           setIsSearching(false);
           
+          // Clear search interval
+          if (searchInterval) {
+            clearInterval(searchInterval);
+            searchInterval = null;
+          }
+          
           // Start bilateral confirmation process
           startBilateralConfirmation(userId, data);
           return;
@@ -363,8 +374,8 @@ export const useMatchingQueue = (language: string) => {
         if (isActiveRef.current) {
           consecutiveFailures = 0; // Reset on successful search (even if no match)
           
-          // Faster retry for better responsiveness
-          const retryDelay = Math.min(2000 + (attemptCount * 300), 5000); // 2-5s max
+          // Much faster retry for better responsiveness
+          const retryDelay = Math.min(2000 + (attemptCount * 200), 4000); // 2-4s max
           
           console.log(`⏳ No match found, retrying in ${retryDelay/1000}s (attempt ${attemptCount})`);
           
@@ -374,7 +385,14 @@ export const useMatchingQueue = (language: string) => {
             setError(`🔍 Searching for the perfect match... ${data?.total_waiting || 0} users online`);
           }
           
-          searchIntervalRef.current = setTimeout(() => {
+          // Auto-retry after 30s if no match
+          if (attemptCount >= 15) { // After 30s of attempts
+            console.log('⏰ 30s timeout reached, forcing global random match...');
+            setError('🌍 Expanding search globally...');
+            attemptCount = 0; // Reset counter
+          }
+          
+          setTimeout(() => {
             if (isActiveRef.current) {
               performSearch();
             }
@@ -386,13 +404,13 @@ export const useMatchingQueue = (language: string) => {
         consecutiveFailures++;
         
         if (isActiveRef.current) {
-          // Faster backoff for better user experience
-          const backoffDelay = Math.min(1000 * Math.pow(1.3, consecutiveFailures), 8000);
+          // Much faster backoff for better user experience
+          const backoffDelay = Math.min(1000 * Math.pow(1.2, consecutiveFailures), 5000);
           console.log(`🔄 Retrying search in ${backoffDelay/1000}s (failure ${consecutiveFailures})`);
           
           setError(`🔄 Connection issue, retrying... (attempt ${attemptCount})`);
           
-          searchIntervalRef.current = setTimeout(() => {
+          setTimeout(() => {
             if (isActiveRef.current) {
               performSearch();
             }
@@ -401,8 +419,30 @@ export const useMatchingQueue = (language: string) => {
       }
     };
 
-    // Start first search attempt
+    // Start first search attempt immediately
+    console.log('🚀 Starting immediate search process...');
     performSearch();
+    
+    // Also set up periodic polling every 2s as backup
+    searchInterval = setInterval(() => {
+      if (isActiveRef.current && isSearching) {
+        console.log('🔄 Periodic search poll...');
+        performSearch();
+      } else if (!isActiveRef.current || !isSearching) {
+        if (searchInterval) {
+          clearInterval(searchInterval);
+          searchInterval = null;
+        }
+      }
+    }, 2000);
+    
+    // Cleanup function
+    return () => {
+      if (searchInterval) {
+        clearInterval(searchInterval);
+        searchInterval = null;
+      }
+    };
   }, []);
 
   // Bilateral confirmation process with timeout handling

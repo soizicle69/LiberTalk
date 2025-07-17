@@ -115,10 +115,10 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
 
   // Initialize connection on mount
   useEffect(() => {
-    if (!currentUser && !isConnecting && !locationLoading) {
+    if (!currentUser && !isConnecting) {
       startChatWithLocation();
     }
-  }, [currentUser, isConnecting, locationLoading, startChatWithLocation]);
+  }, [currentUser, isConnecting, startChatWithLocation]);
 
   const handleSendMessage = async () => {
     if (!currentMessage.trim() || !isConnected) return;
@@ -149,27 +149,6 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
     }
   };
 
-  // Show location permission request
-  if (locationLoading) {
-    return (
-      <div className="h-screen bg-slate-50 dark:bg-slate-900 flex items-center justify-center">
-        <div className="text-center p-8 bg-white dark:bg-slate-800 rounded-2xl shadow-xl max-w-md mx-4">
-          <MapPin className="w-12 h-12 text-blue-500 mx-auto mb-4 animate-pulse" />
-          <h2 className="text-xl font-semibold text-gray-900 dark:text-white mb-2">
-            Location Request
-          </h2>
-          <p className="text-gray-600 dark:text-slate-300 mb-4">
-            We'd like to use your location to find nearby people for better connections. 
-            You can refuse - we'll use your IP location instead (less precise).
-          </p>
-          <div className="flex items-center justify-center gap-2 text-blue-500">
-            <Loader className="w-4 h-4 animate-spin" />
-            <span>Waiting for permission...</span>
-          </div>
-        </div>
-      </div>
-    );
-  }
 
   // Show search status screen
   if (searchStatus.phase !== 'idle' && searchStatus.phase !== 'connected' && !isConnected) {
@@ -200,18 +179,30 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
             </p>
           )}
           
-          {/* Dynamic progress indicator */}
+          {/* Enhanced dynamic progress indicators */}
           <div className="mb-4">
             {searchStatus.phase === 'joining' && (
-              <div className="w-full bg-gray-200 dark:bg-gray-700 rounded-full h-2">
-                <div className="bg-blue-500 h-2 rounded-full animate-pulse" style={{ width: '60%' }}></div>
+              <div className="w-full bg-gray-200 dark:bg-gray-700 rounded-full h-3 mb-2">
+                <div className="bg-blue-500 h-3 rounded-full transition-all duration-1000" 
+                     style={{ 
+                       width: searchStatus.message.includes('location') ? '30%' : 
+                              searchStatus.message.includes('session') ? '60%' : 
+                              searchStatus.message.includes('queue') ? '90%' : '100%',
+                       animation: 'pulse 2s ease-in-out infinite'
+                     }}>
+                </div>
               </div>
             )}
             {searchStatus.phase === 'searching' && (
-              <div className="flex items-center justify-center gap-1">
+              <div className="flex items-center justify-center gap-1 mb-2">
                 <div className="w-2 h-2 bg-blue-500 rounded-full animate-bounce" style={{ animationDelay: '0ms' }}></div>
                 <div className="w-2 h-2 bg-blue-500 rounded-full animate-bounce" style={{ animationDelay: '150ms' }}></div>
                 <div className="w-2 h-2 bg-blue-500 rounded-full animate-bounce" style={{ animationDelay: '300ms' }}></div>
+              </div>
+            )}
+            {searchStatus.phase === 'confirming' && (
+              <div className="w-full bg-gray-200 dark:bg-gray-700 rounded-full h-2 mb-2">
+                <div className="bg-yellow-500 h-2 rounded-full animate-pulse" style={{ width: '75%' }}></div>
               </div>
             )}
           </div>
@@ -221,7 +212,7 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
             <div className="space-y-2">
               {/* Timer display */}
               {waitTime > 0 && (
-                <div className="text-sm text-blue-600 dark:text-blue-400 font-mono">
+                <div className="text-lg text-blue-600 dark:text-blue-400 font-mono font-bold">
                   <div className="inline-flex items-center gap-2">
                     <div className="w-2 h-2 bg-blue-500 rounded-full animate-pulse"></div>
                     {Math.floor(waitTime / 60)}:{(waitTime % 60).toString().padStart(2, '0')}
@@ -231,7 +222,7 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
               
               {/* Queue position */}
               {queuePosition !== null && (
-                <p className="text-xs text-gray-500 dark:text-slate-400">
+                <p className="text-sm text-blue-600 dark:text-blue-400 font-semibold">
                   Position in queue: #{queuePosition + 1}
                 </p>
               )}
@@ -250,6 +241,13 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
               {waitTime > 30 && (
                 <p className="text-xs text-green-600 dark:text-green-400 animate-pulse">
                   🌟 Hang tight! We're finding the perfect match for you...
+                </p>
+              )}
+              
+              {/* Auto-retry message */}
+              {waitTime > 60 && (
+                <p className="text-xs text-yellow-600 dark:text-yellow-400">
+                  🌍 Expanding search globally for better matches...
                 </p>
               )}
             </div>

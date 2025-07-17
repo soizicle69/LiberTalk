@@ -46,58 +46,74 @@ export const useGeolocation = () => {
     return 'Unknown';
   };
 
-  const requestLocation = async (): Promise<GeolocationData | null> => {
+  // Non-blocking geolocation with strict timeout
+  const requestLocationNonBlocking = async (): Promise<GeolocationData | null> => {
     setLoading(true);
     setError(null);
 
-    // Timeout promise for geolocation
-    const timeoutPromise = new Promise<never>((_, reject) => {
-      setTimeout(() => reject(new Error('Geolocation timeout')), 5000);
-    });
-
     try {
+      console.log('📍 Starting non-blocking geolocation request (5s max)...');
+      
       // Check if geolocation is supported
       if (!('geolocation' in navigator)) {
-        throw new Error('Geolocation is not supported by this browser');
+        console.log('📍 Geolocation not supported, skipping to IP fallback');
+        throw new Error('Geolocation not supported');
       }
 
-      // Request location with 5s timeout using Promise.race
-      const locationPromise = new Promise<GeolocationPosition>((resolve, reject) => {
+      // Create geolocation promise with strict timeout
+      const geolocPromise = new Promise<GeolocationPosition>((resolve, reject) => {
         navigator.geolocation.getCurrentPosition(
           resolve,
           reject,
           {
             enableHighAccuracy: false, // Faster response
             timeout: 4000, // 4s internal timeout
-            maximumAge: 600000, // 10 minutes cache
+            maximumAge: 300000, // 5 minutes cache
           }
         );
       });
 
-      const position = await Promise.race([locationPromise, timeoutPromise]);
+      // Create timeout promise (5s max)
+      const timeoutPromise = new Promise<never>((_, reject) => {
+        setTimeout(() => {
+          console.log('📍 Geolocation timeout after 5s');
+          reject(new Error('Geolocation timeout'));
+        }, 5000);
+      });
+
+      // Race between geolocation and timeout
+      const position = await Promise.race([geolocPromise, timeoutPromise]);
 
       const { latitude, longitude, accuracy } = position.coords;
       const continent = getContinent(latitude, longitude);
 
-      // Try to get more detailed location info from reverse geocoding
+      console.log('📍 GPS location obtained:', { latitude, longitude, continent, accuracy });
+
+      // Try reverse geocoding with timeout
       let country = 'Unknown';
       let region = 'Unknown';
       let city = 'Unknown';
 
       try {
-        // Use a free reverse geocoding service
-        const response = await fetch(
+        const geocodePromise = fetch(
           `https://api.bigdatacloud.net/data/reverse-geocode-client?latitude=${latitude}&longitude=${longitude}&localityLanguage=en`
         );
+        
+        const geocodeTimeout = new Promise<never>((_, reject) => {
+          setTimeout(() => reject(new Error('Geocoding timeout')), 3000);
+        });
+
+        const response = await Promise.race([geocodePromise, geocodeTimeout]);
         
         if (response.ok) {
           const data = await response.json();
           country = data.countryName || 'Unknown';
           region = data.principalSubdivision || 'Unknown';
           city = data.city || data.locality || 'Unknown';
+          console.log('📍 Reverse geocoding successful:', { country, region, city });
         }
       } catch (geocodeError) {
-        console.warn('Reverse geocoding failed:', geocodeError);
+        console.warn('📍 Reverse geocoding failed, using coordinates only:', geocodeError);
       }
 
       const locationData: GeolocationData = {
@@ -113,29 +129,30 @@ export const useGeolocation = () => {
       setLocation(locationData);
       setPermissionStatus('granted');
       setIsIPBased(false);
-      setPermissionStatus('granted');
+      console.log('✅ GPS location set successfully');
       return locationData;
 
     } catch (geoError: any) {
-      console.error('Geolocation error:', geoError);
+      console.log('📍 GPS geolocation failed, trying IP fallback:', geoError.message);
       
-      let errorMessage = 'Unable to get your location';
-      
+      // Set permission status based on error
       if (geoError.code === 1) {
-        errorMessage = 'Location access denied. Please enable location permissions.';
         setPermissionStatus('denied');
-        setPermissionStatus('denied');
-      } else if (geoError.code === 2) {
-        errorMessage = 'Location unavailable. Please check your GPS/network.';
-      } else if (geoError.code === 3) {
-        errorMessage = 'Location request timed out. Please try again.';
+        setError('Location access denied - using IP location');
+      } else {
+        setError('GPS unavailable - using IP location');
       }
 
-      setError(errorMessage);
-      
-      // Fallback to IP-based location
+      // IP-based fallback with timeout
       try {
-        const response = await fetch('https://ipapi.co/json/');
+        console.log('🌐 Attempting IP-based geolocation...');
+        
+        const ipPromise = fetch('https://ipapi.co/json/');
+        const ipTimeout = new Promise<never>((_, reject) => {
+          setTimeout(() => reject(new Error('IP geolocation timeout')), 3000);
+        });
+
+        const response = await Promise.race([ipPromise, ipTimeout]);
         const data = await response.json();
         
         if (!data.error && data.latitude && data.longitude) {
@@ -153,29 +170,31 @@ export const useGeolocation = () => {
             city: data.city || 'Unknown',
           };
           
+          console.log('✅ IP location obtained:', fallbackLocation);
           setLocation(fallbackLocation);
           setIsIPBased(true);
-          setError(geoError.code === 1 ? 'Using IP-based location (less precise)' : 'Using approximate location based on IP address');
+          setError('Using IP-based location (less precise)');
           return fallbackLocation;
+        } else {
+          console.log('📍 IP geolocation returned invalid data:', data);
         }
       } catch (ipError) {
-        console.error('IP geolocation also failed:', ipError);
+        console.warn('📍 IP geolocation also failed:', ipError);
       }
 
+      // Complete fallback - no location
+      console.log('📍 All location methods failed, proceeding with global matching');
+      setError('Location unavailable - using global matching');
       return null;
+
     } finally {
       setLoading(false);
     }
   };
 
-  // Check permission status on mount
-  useEffect(() => {
-    if ('permissions' in navigator) {
-      navigator.permissions.query({ name: 'geolocation' }).then((result) => {
-        setPermissionStatus(result.state as 'prompt' | 'granted' | 'denied');
-      });
-    }
-  }, []);
+  // Legacy method for compatibility
+  const requestLocation = requestLocationNonBlocking;
+
   // Check permission status on mount
   useEffect(() => {
     if ('permissions' in navigator) {
@@ -191,7 +210,7 @@ export const useGeolocation = () => {
     error, 
     permissionStatus,
     isIPBased,
-    permissionStatus,
-    requestLocation 
+    requestLocation,
+    requestLocationNonBlocking
   };
 };
