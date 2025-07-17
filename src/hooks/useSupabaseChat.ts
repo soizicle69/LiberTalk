@@ -228,24 +228,27 @@ export const useSupabaseChat = (language: string) => {
       localStorage.setItem('libertalk_device_id', deviceId);
       
       const userData = {
-        device_id: deviceId,
+        id: deviceId,
         location: locationData?.latitude && locationData?.longitude 
           ? `POINT(${locationData.longitude} ${locationData.latitude})`
           : null,
-        continent: locationData?.continent || 'Unknown',
-        country: locationData?.country || 'Unknown',
-        city: locationData?.city || 'Unknown',
+        ip_geolocation: {
+          continent: locationData?.continent || 'Unknown',
+          country: locationData?.country || 'Unknown',
+          city: locationData?.city || 'Unknown'
+        },
         language,
         status: 'searching',
-        joined_at: new Date().toISOString(),
-        last_heartbeat: new Date().toISOString(),
+        connected_at: new Date().toISOString(),
+        last_activity: new Date().toISOString(),
+        session_token: crypto.randomUUID?.() || Math.random().toString(36).substring(2),
       };
 
       console.log('💾 Inserting user data:', userData);
       
       const { data, error } = await supabase
         .from('waiting_users')
-        .upsert(userData, { onConflict: 'device_id' })
+        .upsert(userData, { onConflict: 'id' })
         .select()
         .single();
 
