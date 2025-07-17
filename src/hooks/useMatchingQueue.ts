@@ -269,7 +269,7 @@ export const useMatchingQueue = (language: string) => {
           p_latitude: locationData?.latitude || null,
           p_longitude: locationData?.longitude || null,
           p_user_agent: navigator.userAgent,
-          p_ip_address: null // Will be detected server-side
+          p_ip_address: null
         });
         data = result.data;
         error = result.error;

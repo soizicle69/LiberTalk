@@ -308,30 +308,20 @@ export const useSupabaseChat = (language: string) => {
       }
       
       const userData = {
-        id: deviceId,
+        device_id: deviceId,
         continent: locationData?.continent || 'Unknown',
-        location: locationData?.latitude && locationData?.longitude 
-          ? `POINT(${locationData.longitude} ${locationData.latitude})`
-          : null,
-        ip_geolocation: {
-          continent: locationData?.continent || 'Unknown',
-          country: locationData?.country || 'Unknown',
-          city: locationData?.city || 'Unknown'
-        },
+        country: locationData?.country || 'Unknown',
+        city: locationData?.city || 'Unknown',
         language,
-        status: 'searching',
-        connected_at: new Date().toISOString(),
-        last_activity: new Date().toISOString(),
-        session_token: crypto.randomUUID?.() || Math.random().toString(36).substring(2),
+        latitude: locationData?.latitude || null,
+        longitude: locationData?.longitude || null,
+        user_agent: navigator.userAgent,
+        ip_address: null // Will be detected server-side
       };
 
       console.log('💾 Inserting user data:', userData);
       
-      const { data, error } = await supabase
-        .from('waiting_users')
-        .upsert(userData, { onConflict: 'id' })
-        .select()
-        .single();
+      const { data, error } = await supabase.rpc('join_waiting_queue_v2', userData);
 
       if (error) throw error;
       
@@ -339,8 +329,27 @@ export const useSupabaseChat = (language: string) => {
         throw new Error('No data returned from user insert');
       }
       
+      if (!data.success) {
+        throw new Error(data.error || 'Failed to join queue');
+      }
+      
       console.log('✅ User session initialized successfully');
-      setCurrentUser(data);
+      
+      // Create user object from response
+      const userObject = {
+        id: data.user_id,
+        device_id: deviceId,
+        session_token: data.session_id,
+        continent: locationData?.continent || 'Unknown',
+        country: locationData?.country || 'Unknown',
+        city: locationData?.city || 'Unknown',
+        language,
+        status: 'searching',
+        connected_at: new Date().toISOString(),
+        last_activity: new Date().toISOString(),
+      };
+      
+      setCurrentUser(userObject);
       
       try {
         await updatePresence('online');
@@ -348,7 +357,7 @@ export const useSupabaseChat = (language: string) => {
         console.warn('⚠️ Failed to update presence, continuing anyway:', presenceError);
       }
       
-      return data;
+      return userObject;
       
     } catch (error) {
       console.error('❌ initializeUser failed:', error);
@@ -473,7 +482,13 @@ export const useSupabaseChat = (language: string) => {
         await joinQueue(user.device_id, [], locationData);
       } catch (queueError) {
         console.error('❌ FORCED RETRY: Failed to join queue, will auto-retry:', queueError);
-        // Don't throw, let joinQueue handle its own retries
+        // Force retry instead of giving up
+        setTimeout(() => {
+          if (isActiveRef.current) {
+            console.log('🔄 FORCED RETRY: Auto-retrying queue join...');
+            startChatWithLocation();
+          }
+        }, 2000);
         return;
       }
       
