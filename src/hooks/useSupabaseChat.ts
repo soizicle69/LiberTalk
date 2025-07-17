@@ -228,28 +228,23 @@ export const useSupabaseChat = (language: string) => {
       localStorage.setItem('libertalk_device_id', deviceId);
       
       const userData = {
-        ip_geolocation: {
-          continent: locationData?.continent || 'Unknown',
-          country: locationData?.country || 'Unknown',
-          region: locationData?.region || 'Unknown',
-          city: locationData?.city || 'Unknown',
-          latitude: locationData?.latitude || null,
-          longitude: locationData?.longitude || null,
-        },
-        continent: locationData?.continent || 'Unknown',
-        language,
-        status: 'online',
-        last_activity: new Date().toISOString(),
-        connected_at: new Date().toISOString(),
-        last_seen: new Date().toISOString(),
         device_id: deviceId,
-        retry_count: 0,
+        location: locationData?.latitude && locationData?.longitude 
+          ? `POINT(${locationData.longitude} ${locationData.latitude})`
+          : null,
+        continent: locationData?.continent || 'Unknown',
+        country: locationData?.country || 'Unknown',
+        city: locationData?.city || 'Unknown',
+        language,
+        status: 'searching',
+        joined_at: new Date().toISOString(),
+        last_heartbeat: new Date().toISOString(),
       };
 
       console.log('💾 Inserting user data:', userData);
       
       const { data, error } = await supabase
-        .from('active_users')
+        .from('waiting_users')
         .upsert(userData, { onConflict: 'device_id' })
         .select()
         .single();
@@ -401,14 +396,18 @@ export const useSupabaseChat = (language: string) => {
       // Get partner info
       console.log('👤 Fetching partner information...');
       const { data: partnerData, error: partnerError } = await supabase
-        .from('active_users')
-        .select('ip_geolocation')
+        .from('waiting_users')
+        .select('continent, country, city')
         .eq('id', match.partner_id)
         .single();
 
       if (partnerData && !partnerError) {
         console.log('👤 Partner info retrieved successfully');
-        setPartnerLocation(partnerData.ip_geolocation);
+        setPartnerLocation({
+          continent: partnerData.continent,
+          country: partnerData.country,
+          city: partnerData.city
+        });
       } else {
         console.warn('⚠️ Failed to get partner info:', partnerError);
       }
@@ -499,8 +498,8 @@ export const useSupabaseChat = (language: string) => {
 
       // Update user activity
       await supabase
-        .from('active_users')
-        .update({ last_activity: new Date().toISOString() })
+        .from('waiting_users')
+        .update({ last_heartbeat: new Date().toISOString() })
         .eq('id', currentUser.id);
 
     } catch (error) {
@@ -593,9 +592,9 @@ export const useSupabaseChat = (language: string) => {
       await leaveQueue();
 
       await supabase
-        .from('active_users')
+        .from('waiting_users')
         .update({ 
-          status: 'offline'
+          status: 'disconnected'
         })
         .eq('id', currentUser.id);
 
