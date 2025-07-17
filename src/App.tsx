@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Homepage } from './components/Homepage';
 import { ChatInterface } from './components/ChatInterface';
+import { ChatErrorBoundary } from './components/ErrorBoundary';
 import { translations, detectLanguage } from './utils/translations';
 import { useTheme } from './hooks/useTheme';
 import './lib/translation'; // Initialize i18next
@@ -34,11 +35,13 @@ function App() {
           onStartChat={handleStartChat}
         />
       ) : (
-        <ChatInterface
-          translations={t}
-          onBack={handleBackToHome}
-          language={language}
-        />
+        <ChatErrorBoundary onRetry={handleStartChat}>
+          <ChatInterface
+            translations={t}
+            onBack={handleBackToHome}
+            language={language}
+          />
+        </ChatErrorBoundary>
       )}
     </div>
   );

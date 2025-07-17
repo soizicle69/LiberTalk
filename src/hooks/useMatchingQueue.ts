@@ -256,23 +256,34 @@ export const useMatchingQueue = (language: string) => {
       console.log('📍 Using location data:', locationData.continent, locationData.country, locationData.city);
 
       // Join waiting queue
-      const { data, error } = await supabase.rpc('join_waiting_queue_v2', {
-        p_device_id: deviceIdRef.current,
-        p_continent: locationData?.continent || 'Unknown',
-        p_country: locationData?.country || 'Unknown',
-        p_city: locationData?.city || 'Unknown',
-        p_language: language,
-        p_latitude: locationData?.latitude || null,
-        p_longitude: locationData?.longitude || null,
-        p_user_agent: navigator.userAgent,
-        p_ip_address: null // Will be detected server-side
-      });
+      let data, error;
+      try {
+        console.log('📡 Calling join_waiting_queue_v2 RPC...');
+        const result = await supabase.rpc('join_waiting_queue_v2', {
+          p_device_id: deviceIdRef.current,
+          p_continent: locationData?.continent || 'Unknown',
+          p_country: locationData?.country || 'Unknown',
+          p_city: locationData?.city || 'Unknown',
+          p_language: language,
+          p_latitude: locationData?.latitude || null,
+          p_longitude: locationData?.longitude || null,
+          p_user_agent: navigator.userAgent,
+          p_ip_address: null // Will be detected server-side
+        });
+        data = result.data;
+        error = result.error;
+      } catch (rpcError) {
+        console.error('📡 RPC call failed:', rpcError);
+        throw new Error(`RPC call failed: ${rpcError.message || rpcError}`);
+      }
 
       if (error) {
+        console.error('📡 RPC returned error:', error);
         throw new Error(`Queue join failed: ${error.message}`);
       }
 
       if (!data?.success) {
+        console.error('📡 RPC returned failure:', data);
         throw new Error(data?.error || 'Failed to join queue');
       }
 
@@ -299,15 +310,25 @@ export const useMatchingQueue = (language: string) => {
       }
       
       // Initial stats update
-      updateQueueStats();
+      try {
+        updateQueueStats();
+      } catch (statsError) {
+        console.warn('⚠️ Failed to update queue stats, continuing anyway:', statsError);
+      }
       
     } catch (error: any) {
       console.error('❌ Error joining queue:', error);
-      setError(`Failed to join waiting queue: ${error.message}`);
+      const errorMessage = error?.message || error?.toString() || 'Unknown queue error';
+      setError(`Failed to join waiting queue: ${errorMessage}`);
       setIsInQueue(false);
       setIsSearching(false);
       isActiveRef.current = false;
       stopAllIntervals();
+      
+      // Show alert for critical queue errors
+      setTimeout(() => {
+        alert(`Queue Error: ${errorMessage}\n\nPlease try again or refresh the page.`);
+      }, 100);
       
       // Auto-retry after 2 seconds on failure
       setTimeout(() => {
@@ -340,11 +361,21 @@ export const useMatchingQueue = (language: string) => {
         setSearchAttempts(attemptCount);
         console.log(`🔍 Search attempt ${attemptCount} for user ${userId}`);
         
-        const { data, error } = await supabase.rpc('find_best_match_v2', {
-          p_user_id: userId
-        });
+        let data, error;
+        try {
+          console.log('📡 Calling find_best_match_v2 RPC...');
+          const result = await supabase.rpc('find_best_match_v2', {
+            p_user_id: userId
+          });
+          data = result.data;
+          error = result.error;
+        } catch (rpcError) {
+          console.error('📡 Match RPC call failed:', rpcError);
+          throw new Error(`Match RPC failed: ${rpcError.message || rpcError}`);
+        }
 
         if (error) {
+          console.error('📡 Match RPC returned error:', error);
           throw new Error(`Match search failed: ${error.message}`);
         }
 
@@ -366,7 +397,12 @@ export const useMatchingQueue = (language: string) => {
           }
           
           // Start bilateral confirmation process
-          startBilateralConfirmation(userId, data);
+          try {
+            startBilateralConfirmation(userId, data);
+          } catch (confirmError) {
+            console.error('❌ Failed to start bilateral confirmation:', confirmError);
+            throw confirmError;
+          }
           return;
         }
 
@@ -403,12 +439,21 @@ export const useMatchingQueue = (language: string) => {
         console.error('❌ Search attempt failed:', error);
         consecutiveFailures++;
         
+        const errorMessage = error?.message || error?.toString() || 'Unknown search error';
+        
         if (isActiveRef.current) {
           // Much faster backoff for better user experience
           const backoffDelay = Math.min(1000 * Math.pow(1.2, consecutiveFailures), 5000);
           console.log(`🔄 Retrying search in ${backoffDelay/1000}s (failure ${consecutiveFailures})`);
           
-          setError(`🔄 Connection issue, retrying... (attempt ${attemptCount})`);
+          setError(`🔄 Search error, retrying... (${errorMessage})`);
+          
+          // Show alert for persistent search failures
+          if (consecutiveFailures >= 5) {
+            setTimeout(() => {
+              alert(`Persistent Search Error: ${errorMessage}\n\nPlease check your connection or refresh the page.`);
+            }, 100);
+          }
           
           setTimeout(() => {
             if (isActiveRef.current) {
@@ -421,13 +466,22 @@ export const useMatchingQueue = (language: string) => {
 
     // Start first search attempt immediately
     console.log('🚀 Starting immediate search process...');
-    performSearch();
+    try {
+      performSearch();
+    } catch (searchError) {
+      console.error('❌ Failed to start search process:', searchError);
+      setError(`Failed to start search: ${searchError.message || searchError}`);
+    }
     
     // Also set up periodic polling every 2s as backup
     searchInterval = setInterval(() => {
       if (isActiveRef.current && isSearching) {
         console.log('🔄 Periodic search poll...');
-        performSearch();
+        try {
+          performSearch();
+        } catch (pollError) {
+          console.error('❌ Periodic search poll failed:', pollError);
+        }
       } else if (!isActiveRef.current || !isSearching) {
         if (searchInterval) {
           clearInterval(searchInterval);

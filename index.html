@@ -9,5 +9,32 @@
   <body>
     <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>
+    
+    <!-- Fallback if JavaScript fails to load -->
+    <noscript>
+      <div style="
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        min-height: 100vh;
+        background: #f8fafc;
+        font-family: system-ui, sans-serif;
+        padding: 20px;
+      ">
+        <div style="
+          background: white;
+          padding: 40px;
+          border-radius: 12px;
+          box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+          text-align: center;
+          max-width: 400px;
+        ">
+          <h2 style="color: #dc2626; margin-bottom: 16px;">JavaScript Required</h2>
+          <p style="color: #6b7280;">
+            LiberTalk requires JavaScript to function. Please enable JavaScript in your browser and reload the page.
+          </p>
+        </div>
+      </div>
+    </noscript>
   </body>
 </html>

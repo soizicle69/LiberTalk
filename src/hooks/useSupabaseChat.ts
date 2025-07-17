@@ -50,16 +50,38 @@ export const useSupabaseChat = (language: string) => {
   // Global error handler
   const handleError = useCallback((error: any, context: string, canRetry: boolean = true) => {
     console.error(`❌ Error in ${context}:`, error);
+    
+    // Log detailed error information
+    if (error?.message) {
+      console.error(`   Message: ${error.message}`);
+    }
+    if (error?.code) {
+      console.error(`   Code: ${error.code}`);
+    }
+    if (error?.details) {
+      console.error(`   Details: ${error.details}`);
+    }
+    if (error?.hint) {
+      console.error(`   Hint: ${error.hint}`);
+    }
+    
     const errorMessage = error?.message || error?.toString() || 'Unknown error';
     
     setAppState({
       phase: 'error',
-      message: `Erreur de connexion: ${errorMessage}`,
+      message: `Connection error: ${errorMessage}`,
       details: `Context: ${context}`,
       canRetry
     });
     
     setConnectionError(`${context}: ${errorMessage}`);
+    
+    // Show browser alert for critical errors
+    if (!canRetry || context.includes('Fatal')) {
+      setTimeout(() => {
+        alert(`LiberTalk Error: ${errorMessage}\n\nContext: ${context}\n\nPlease refresh the page.`);
+      }, 100);
+    }
     
     // Auto-retry après 3 secondes si possible
     if (canRetry && isActiveRef.current) {
@@ -222,10 +244,16 @@ export const useSupabaseChat = (language: string) => {
       setConnectionError(null);
       console.log('🔧 Initializing user session with location:', locationData?.continent, locationData?.country);
       
-      const deviceId = localStorage.getItem('libertalk_device_id') || 
-                      crypto.randomUUID?.() || 
-                      Math.random().toString(36).substring(2);
-      localStorage.setItem('libertalk_device_id', deviceId);
+      let deviceId;
+      try {
+        deviceId = localStorage.getItem('libertalk_device_id') || 
+                   crypto.randomUUID?.() || 
+                   Math.random().toString(36).substring(2);
+        localStorage.setItem('libertalk_device_id', deviceId);
+      } catch (storageError) {
+        console.warn('⚠️ localStorage not available, using session-only ID');
+        deviceId = crypto.randomUUID?.() || Math.random().toString(36).substring(2);
+      }
       
       const userData = {
         id: deviceId,
@@ -252,15 +280,26 @@ export const useSupabaseChat = (language: string) => {
         .select()
         .single();
 
+      }
+      
+      if (!data) {
+        throw new Error('No data returned from user insert');
       if (error) throw error;
       
       console.log('✅ User session initialized successfully');
       setCurrentUser(data);
-      await updatePresence('online');
+      
+      try {
+        await updatePresence('online');
+      } catch (presenceError) {
+        console.warn('⚠️ Failed to update presence, continuing anyway:', presenceError);
+      }
+      
       return data;
       
     } catch (error) {
-      handleError(error, 'initializeUser');
+      console.error('❌ initializeUser failed:', error);
+      handleError(error, 'initializeUser', true);
       return null;
     }
   }, [language, updatePresence, handleError]);
@@ -318,7 +357,7 @@ export const useSupabaseChat = (language: string) => {
         });
         
         console.log('📍 Attempting geolocation (3s timeout)...');
-        locationData = await requestLocationNonBlocking();
+        locationData = await requestLocationNonBlocking(3000);
         
         if (locationData) {
           console.log('✅ Geolocation success:', locationData.continent, locationData.country);
@@ -359,16 +398,25 @@ export const useSupabaseChat = (language: string) => {
         message: '🔄 Joining waiting queue...' 
       });
       
-      await joinQueue(user.id, user.previous_matches || []);
+      try {
+        await joinQueue(user.device_id, []);
+      } catch (queueError) {
+        console.error('❌ Failed to join queue:', queueError);
+        throw new Error(`Queue join failed: ${queueError.message || queueError}`);
+      }
       
       // Step 4: Start heartbeat system
-      startHeartbeat();
+      try {
+        startHeartbeat();
+      } catch (heartbeatError) {
+        console.warn('⚠️ Failed to start heartbeat, continuing anyway:', heartbeatError);
+      }
       
       console.log('✅ Chat initialization completed successfully');
       
     } catch (error) {
       console.error('❌ Error starting chat:', error);
-      handleError(error, 'startChatWithLocation');
+      handleError(error, 'startChatWithLocation', true);
       setIsConnecting(false);
     }
   }, [requestLocationNonBlocking, initializeUser, joinQueue, startHeartbeat, handleError]);
@@ -523,6 +571,7 @@ export const useSupabaseChat = (language: string) => {
       });
       
       if (error) {
+        console.error('💾 Supabase insert error:', error);
         console.warn('⚠️ Error ending chat session:', error);
         // Fallback to direct update
         await supabase
