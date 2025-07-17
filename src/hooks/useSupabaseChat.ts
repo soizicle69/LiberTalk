@@ -324,13 +324,31 @@ export const useSupabaseChat = (language: string) => {
       const { data, error } = await supabase.rpc('join_waiting_queue_v2', userData);
 
       if (error) throw error;
+
+      // Log detailed response for debugging
+      console.log('🔍 RPC Response data:', data);
+      console.log('🔍 RPC Response type:', typeof data);
+      console.log('🔍 RPC Response keys:', data ? Object.keys(data) : 'null');
       
       if (!data) {
-        throw new Error('No data returned from user insert');
+        throw new Error('No data returned from join_waiting_queue_v2 RPC call');
       }
       
       if (!data.success) {
-        throw new Error(data.error || 'Failed to join queue');
+        const errorMsg = data.error || data.message || 'Failed to join queue - unknown error';
+        console.error('🔍 RPC returned failure:', errorMsg);
+        console.error('🔍 Full RPC response:', JSON.stringify(data, null, 2));
+        throw new Error(`RPC Error: ${errorMsg}`);
+      }
+      
+      if (!data.user_id) {
+        console.error('🔍 Missing user_id in response:', JSON.stringify(data, null, 2));
+        throw new Error('RPC returned success but missing user_id');
+      }
+      
+      if (!data.session_id) {
+        console.error('🔍 Missing session_id in response:', JSON.stringify(data, null, 2));
+        throw new Error('RPC returned success but missing session_id');
       }
       
       console.log('✅ User session initialized successfully');
