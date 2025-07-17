@@ -280,11 +280,11 @@ export const useSupabaseChat = (language: string) => {
         .select()
         .single();
 
-      }
+      if (error) throw error;
       
       if (!data) {
         throw new Error('No data returned from user insert');
-      if (error) throw error;
+      }
       
       console.log('✅ User session initialized successfully');
       setCurrentUser(data);
