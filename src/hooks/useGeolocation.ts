@@ -47,12 +47,12 @@ export const useGeolocation = () => {
   };
 
   // Non-blocking geolocation with strict timeout
-  const requestLocationNonBlocking = async (): Promise<GeolocationData | null> => {
+  const requestLocationNonBlocking = async (timeoutMs: number = 3000): Promise<GeolocationData | null> => {
     setLoading(true);
     setError(null);
 
     try {
-      console.log('📍 Starting non-blocking geolocation request (5s max)...');
+      console.log(`📍 Starting non-blocking geolocation request (${timeoutMs/1000}s max)...`);
       
       // Check if geolocation is supported
       if (!('geolocation' in navigator)) {
@@ -67,18 +67,18 @@ export const useGeolocation = () => {
           reject,
           {
             enableHighAccuracy: false, // Faster response
-            timeout: 4000, // 4s internal timeout
+            timeout: timeoutMs - 1000, // Internal timeout slightly less than external
             maximumAge: 300000, // 5 minutes cache
           }
         );
       });
 
-      // Create timeout promise (5s max)
+      // Create timeout promise
       const timeoutPromise = new Promise<never>((_, reject) => {
         setTimeout(() => {
-          console.log('📍 Geolocation timeout after 5s');
+          console.log(`📍 Geolocation timeout after ${timeoutMs/1000}s`);
           reject(new Error('Geolocation timeout'));
-        }, 5000);
+        }, timeoutMs);
       });
 
       // Race between geolocation and timeout
@@ -100,7 +100,7 @@ export const useGeolocation = () => {
         );
         
         const geocodeTimeout = new Promise<never>((_, reject) => {
-          setTimeout(() => reject(new Error('Geocoding timeout')), 3000);
+          setTimeout(() => reject(new Error('Geocoding timeout')), 2000);
         });
 
         const response = await Promise.race([geocodePromise, geocodeTimeout]);
@@ -149,7 +149,7 @@ export const useGeolocation = () => {
         
         const ipPromise = fetch('https://ipapi.co/json/');
         const ipTimeout = new Promise<never>((_, reject) => {
-          setTimeout(() => reject(new Error('IP geolocation timeout')), 3000);
+          setTimeout(() => reject(new Error('IP geolocation timeout')), 2000);
         });
 
         const response = await Promise.race([ipPromise, ipTimeout]);

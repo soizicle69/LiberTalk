@@ -50,11 +50,12 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
     queueStats,
     showNextButton,
     nextButtonCountdown,
-    searchStatus,
+    appState,
     startChatWithLocation,
     sendMessage,
     skipPartner,
     handleNextClick,
+    handleRetry,
     disconnect,
   } = useSupabaseChat(language);
 
@@ -116,6 +117,7 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
   // Initialize connection on mount
   useEffect(() => {
     if (!currentUser && !isConnecting) {
+      console.log('🚀 Auto-starting chat on component mount');
       startChatWithLocation();
     }
   }, [currentUser, isConnecting, startChatWithLocation]);
@@ -150,57 +152,99 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
   };
 
 
-  // Show search status screen
-  if (searchStatus.phase !== 'idle' && searchStatus.phase !== 'connected' && !isConnected) {
+  // Show loading/search/error screens
+  if (appState.phase !== 'idle' && appState.phase !== 'connected' && !isConnected) {
     return (
       <div className="h-screen bg-slate-50 dark:bg-slate-900 flex items-center justify-center">
         <div className="text-center p-8 bg-white dark:bg-slate-800 rounded-2xl shadow-xl max-w-md mx-4">
+          
+          {/* Error State */}
+          {appState.phase === 'error' && (
+            <>
+              <div className="w-16 h-16 bg-red-100 dark:bg-red-900/30 rounded-full flex items-center justify-center mx-auto mb-4">
+                <AlertCircle className="w-8 h-8 text-red-500 animate-pulse" />
+              </div>
+              <h2 className="text-xl font-semibold text-red-600 dark:text-red-400 mb-2">
+                Erreur de connexion
+              </h2>
+              <p className="text-gray-600 dark:text-slate-300 mb-4">
+                {appState.message}
+              </p>
+              {appState.details && (
+                <p className="text-xs text-gray-500 dark:text-slate-400 mb-4">
+                  {appState.details}
+                </p>
+              )}
+              {appState.canRetry && (
+                <button
+                  onClick={handleRetry}
+                  className="px-6 py-3 bg-blue-500 text-white rounded-lg hover:bg-blue-600 
+                             transition-colors shadow-md mb-4"
+                >
+                  Réessayer
+                </button>
+              )}
+              <button
+                onClick={handleBack}
+                className="block mx-auto text-gray-600 dark:text-slate-300 hover:text-blue-500 
+                           transition-colors text-sm"
+              >
+                Retour à l'accueil
+              </button>
+            </>
+          )}
+          
+          {/* Loading/Search States */}
+          {appState.phase !== 'error' && (
+            <>
           <div className="w-16 h-16 bg-blue-100 dark:bg-blue-900/30 rounded-full flex items-center justify-center mx-auto mb-4">
-            {searchStatus.phase === 'joining' && <MapPin className="w-8 h-8 text-blue-500 animate-pulse" />}
-            {searchStatus.phase === 'searching' && <Loader className="w-8 h-8 text-blue-500 animate-spin" />}
-            {searchStatus.phase === 'matching' && <Globe className="w-8 h-8 text-green-500 animate-pulse" />}
-            {searchStatus.phase === 'confirming' && <Wifi className="w-8 h-8 text-yellow-500 animate-pulse" />}
+                {(appState.phase === 'loading' || appState.phase === 'geolocation') && <MapPin className="w-8 h-8 text-blue-500 animate-pulse" />}
+                {(appState.phase === 'joining_queue' || appState.phase === 'searching') && <Loader className="w-8 h-8 text-blue-500 animate-spin" />}
+                {appState.phase === 'matching' && <Globe className="w-8 h-8 text-green-500 animate-pulse" />}
+                {appState.phase === 'confirming' && <Wifi className="w-8 h-8 text-yellow-500 animate-pulse" />}
           </div>
           
           <h2 className="text-xl font-semibold text-gray-900 dark:text-white mb-2">
-            {searchStatus.phase === 'joining' && 'Joining Queue'}
-            {searchStatus.phase === 'searching' && 'Searching for Match'}
-            {searchStatus.phase === 'matching' && 'Match Found!'}
-            {searchStatus.phase === 'confirming' && 'Confirming Connection'}
+                {appState.phase === 'loading' && 'Chargement...'}
+                {appState.phase === 'geolocation' && 'Localisation'}
+                {appState.phase === 'joining_queue' && 'Connexion en cours'}
+                {appState.phase === 'searching' && 'Recherche de partenaire'}
+                {appState.phase === 'matching' && 'Partenaire trouvé !'}
+                {appState.phase === 'confirming' && 'Confirmation de connexion'}
           </h2>
           
           <p className="text-gray-600 dark:text-slate-300 mb-4">
-            {searchStatus.message}
+                {appState.message}
           </p>
           
-          {searchStatus.details && (
+              {appState.details && (
             <p className="text-sm text-gray-500 dark:text-slate-400 mb-4">
-              {searchStatus.details}
+                  {appState.details}
             </p>
-          )}
+              )}
           
           {/* Enhanced dynamic progress indicators */}
           <div className="mb-4">
-            {searchStatus.phase === 'joining' && (
+                {(appState.phase === 'loading' || appState.phase === 'geolocation' || appState.phase === 'joining_queue') && (
               <div className="w-full bg-gray-200 dark:bg-gray-700 rounded-full h-3 mb-2">
                 <div className="bg-blue-500 h-3 rounded-full transition-all duration-1000" 
                      style={{ 
-                       width: searchStatus.message.includes('location') ? '30%' : 
-                              searchStatus.message.includes('session') ? '60%' : 
-                              searchStatus.message.includes('queue') ? '90%' : '100%',
+                           width: appState.phase === 'geolocation' ? '30%' : 
+                                  appState.phase === 'loading' ? '60%' : 
+                                  appState.phase === 'joining_queue' ? '90%' : '100%',
                        animation: 'pulse 2s ease-in-out infinite'
                      }}>
                 </div>
               </div>
             )}
-            {searchStatus.phase === 'searching' && (
+                {appState.phase === 'searching' && (
               <div className="flex items-center justify-center gap-1 mb-2">
                 <div className="w-2 h-2 bg-blue-500 rounded-full animate-bounce" style={{ animationDelay: '0ms' }}></div>
                 <div className="w-2 h-2 bg-blue-500 rounded-full animate-bounce" style={{ animationDelay: '150ms' }}></div>
                 <div className="w-2 h-2 bg-blue-500 rounded-full animate-bounce" style={{ animationDelay: '300ms' }}></div>
               </div>
             )}
-            {searchStatus.phase === 'confirming' && (
+                {appState.phase === 'confirming' && (
               <div className="w-full bg-gray-200 dark:bg-gray-700 rounded-full h-2 mb-2">
                 <div className="bg-yellow-500 h-2 rounded-full animate-pulse" style={{ width: '75%' }}></div>
               </div>
@@ -208,7 +252,7 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
           </div>
           
           {/* Progress indicators */}
-          {searchStatus.phase === 'searching' && (
+              {appState.phase === 'searching' && (
             <div className="space-y-2">
               {/* Timer display */}
               {waitTime > 0 && (
@@ -252,18 +296,21 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
               )}
             </div>
           )}
+              </>
+            )}
           
           <button
             onClick={handleBack}
-            className="mt-6 px-4 py-2 text-gray-600 dark:text-slate-300 hover:text-blue-500 
+                className="mt-6 px-4 py-2 text-gray-600 dark:text-slate-300 hover:text-blue-500 
                        transition-colors text-sm"
           >
-            Cancel Search
+                Annuler
           </button>
         </div>
       </div>
     );
   }
+  
   return (
     <div className="h-screen bg-slate-50 dark:bg-slate-900 flex flex-col">
       {/* Header */}
@@ -302,8 +349,8 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
                 <div className="flex items-center gap-2 text-yellow-500">
                   <Loader className="w-4 h-4 animate-spin" />
                   <span className="text-sm">
-                    {t.chat.connecting}
-                    {retryCount > 0 && ` (Retry ${retryCount})`}
+                        {appState.message || t.chat.connecting}
+                        {searchAttempts > 0 && ` (Tentative ${searchAttempts})`}
                   </span>
                 </div>
               )}
@@ -385,7 +432,7 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
             <div className="flex items-center gap-2">
               <Loader className="w-4 h-4 animate-spin" />
               <span>
-                {searchStatus.message || 'Connecting...'}
+                    {appState.message || 'Connexion...'}
                 {waitTime > 0 && ` (${Math.floor(waitTime / 60)}:${(waitTime % 60).toString().padStart(2, '0')})`}
                 {searchAttempts > 0 && ` - Attempt ${searchAttempts}`}
                 {queueStats && ` - ${queueStats.total_waiting} users waiting`}
@@ -393,12 +440,12 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
             </div>
             {waitTime > 45 && (
               <div className="mt-2 text-xs opacity-75">
-                Still searching... We'll find someone perfect for you!
+                    Recherche en cours... Nous allons trouver quelqu'un de parfait pour vous !
               </div>
             )}
             {queuePosition !== null && estimatedWait && (
               <div className="mt-2 text-xs opacity-75">
-                Position in queue: {queuePosition + 1} • Estimated wait: {Math.round(estimatedWait)}s
+                    Position dans la file : {queuePosition + 1} • Attente estimée : {Math.round(estimatedWait)}s
               </div>
             )}
           </div>

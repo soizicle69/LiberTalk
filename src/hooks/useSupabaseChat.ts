@@ -15,15 +15,20 @@ export const useSupabaseChat = (language: string) => {
   const [connectionError, setConnectionError] = useState<string | null>(null);
   const [showNextButton, setShowNextButton] = useState(false);
   const [nextButtonCountdown, setNextButtonCountdown] = useState(0);
-  const [searchStatus, setSearchStatus] = useState<{
-    phase: 'idle' | 'joining' | 'searching' | 'matching' | 'confirming' | 'connected';
+  
+  // États explicites pour l'interface
+  const [appState, setAppState] = useState<{
+    phase: 'idle' | 'loading' | 'geolocation' | 'joining_queue' | 'searching' | 'matching' | 'confirming' | 'connected' | 'error';
     message: string;
     details?: string;
+    canRetry?: boolean;
   }>({ phase: 'idle', message: '' });
   
-  const { location, requestLocation, loading: locationLoading, error: locationError, isIPBased } = useGeolocation();
+  const { location, requestLocationNonBlocking, loading: locationLoading, error: locationError, isIPBased } = useGeolocation();
   const nextButtonTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const isActiveRef = useRef<boolean>(true);
+  const retryTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const heartbeatRef = useRef<NodeJS.Timeout | null>(null);
 
   // Use matching queue
   const {
@@ -42,21 +47,64 @@ export const useSupabaseChat = (language: string) => {
     handleDisconnectReconnect,
   } = useMatchingQueue(language);
 
-  // Handle realtime events
+  // Global error handler
+  const handleError = useCallback((error: any, context: string, canRetry: boolean = true) => {
+    console.error(`❌ Error in ${context}:`, error);
+    const errorMessage = error?.message || error?.toString() || 'Unknown error';
+    
+    setAppState({
+      phase: 'error',
+      message: `Erreur de connexion: ${errorMessage}`,
+      details: `Context: ${context}`,
+      canRetry
+    });
+    
+    setConnectionError(`${context}: ${errorMessage}`);
+    
+    // Auto-retry après 3 secondes si possible
+    if (canRetry && isActiveRef.current) {
+      if (retryTimeoutRef.current) {
+        clearTimeout(retryTimeoutRef.current);
+      }
+      retryTimeoutRef.current = setTimeout(() => {
+        if (isActiveRef.current) {
+          console.log('🔄 Auto-retry after error...');
+          handleRetry();
+        }
+      }, 3000);
+    }
+  }, []);
+
+  // Retry function
+  const handleRetry = useCallback(() => {
+    console.log('🔄 Manual retry initiated');
+    setConnectionError(null);
+    setAppState({ phase: 'idle', message: '' });
+    
+    if (retryTimeoutRef.current) {
+      clearTimeout(retryTimeoutRef.current);
+      retryTimeoutRef.current = null;
+    }
+    
+    // Restart the connection process
+    startChatWithLocation();
+  }, []);
+
+  // Handle realtime events with error handling
   const handleMessageReceived = useCallback((message: Message) => {
     if (!isActiveRef.current) return;
     try {
+      console.log('📨 Message received:', message.content?.substring(0, 50) + '...');
       setMessages(prev => {
         if (prev.some(m => m.id === message.id)) return prev;
         return [...prev, message].sort((a, b) => 
           new Date(a.created_at).getTime() - new Date(b.created_at).getTime()
         );
       });
-      console.log('📨 Message received and added to state');
     } catch (error) {
-      console.warn('Error handling received message:', error);
+      handleError(error, 'handleMessageReceived', false);
     }
-  }, []);
+  }, [handleError]);
 
   const handleUserDisconnected = useCallback(() => {
     if (!isActiveRef.current) return;
@@ -65,7 +113,7 @@ export const useSupabaseChat = (language: string) => {
       setIsConnected(false);
       setPartnerId(null);
       setPartnerLocation(null);
-      setSearchStatus({ phase: 'idle', message: '' });
+      setAppState({ phase: 'idle', message: '' });
       
       // Add system message
       const disconnectMessage: Message = {
@@ -93,21 +141,21 @@ export const useSupabaseChat = (language: string) => {
       }, 1000);
       
     } catch (error) {
-      console.error('Error handling user disconnection:', error);
-      handleDisconnectReconnect(); // Auto-reconnect on error
+      handleError(error, 'handleUserDisconnected');
     }
-  }, [currentChat]);
+  }, [currentChat, handleError]);
 
   const handleChatUpdate = useCallback((chat: any) => {
     if (!isActiveRef.current) return;
     try {
+      console.log('💬 Chat updated:', chat.status);
       if (chat.status === 'ended') {
-        console.log('💬 Chat ended via update');
+        handleUserDisconnected();
       }
     } catch (error) {
-      console.warn('Error handling chat update:', error);
+      handleError(error, 'handleChatUpdate', false);
     }
-  }, [handleUserDisconnected]);
+  }, [handleUserDisconnected, handleError]);
 
   const handlePresenceUpdate = useCallback((presence: any) => {
     if (!isActiveRef.current) return;
@@ -123,9 +171,9 @@ export const useSupabaseChat = (language: string) => {
         }, 10000); // 10 second grace period
       }
     } catch (error) {
-      console.warn('Error handling presence update:', error);
+      handleError(error, 'handlePresenceUpdate', false);
     }
-  }, [partnerId, isConnected, handleUserDisconnected]);
+  }, [partnerId, isConnected, handleUserDisconnected, handleError]);
 
   // Handle match found from queue
   const handleBilateralMatchFound = useCallback((matchData: any) => {
@@ -136,14 +184,14 @@ export const useSupabaseChat = (language: string) => {
       
       if (matchData.requires_confirmation && !matchData.both_confirmed) {
         console.log('⏳ Match requires bilateral confirmation...');
-        setSearchStatus({ 
+        setAppState({ 
           phase: 'confirming', 
           message: '🤝 Match found! Confirming connection...',
           details: 'Waiting for both users to confirm'
         });
       } else {
         console.log('✅ Match confirmed, activating chat');
-        setSearchStatus({ 
+        setAppState({ 
           phase: 'connected', 
           message: '✅ Connected! Starting chat...' 
         });
@@ -151,12 +199,11 @@ export const useSupabaseChat = (language: string) => {
       }
       
     } catch (error) {
-      console.error('❌ Error handling bilateral match:', error);
-      handleDisconnectReconnect();
+      handleError(error, 'handleBilateralMatchFound');
     }
-  }, [handleDisconnectReconnect]);
+  }, [handleError]);
 
-  // Setup realtime subscriptions
+  // Setup realtime subscriptions with error handling
   const { updatePresence, broadcastMessage, refreshSubscriptions } = useSupabaseRealtime({
     userId: currentUser?.id,
     chatId: currentChat?.chat_id,
@@ -167,13 +214,14 @@ export const useSupabaseChat = (language: string) => {
     onBilateralMatchFound: handleBilateralMatchFound,
   });
 
-  // Initialize user session
+  // Initialize user session with error handling
   const initializeUser = useCallback(async (locationData: any) => {
     if (!isActiveRef.current) return null;
     
     try {
       setConnectionError(null);
       console.log('🔧 Initializing user session with location:', locationData?.continent, locationData?.country);
+      
       const deviceId = localStorage.getItem('libertalk_device_id') || 
                       crypto.randomUUID?.() || 
                       Math.random().toString(36).substring(2);
@@ -181,14 +229,14 @@ export const useSupabaseChat = (language: string) => {
       
       const userData = {
         ip_geolocation: {
-          continent: locationData.continent || 'Unknown',
-          country: locationData.country || 'Unknown',
-          region: locationData.region || 'Unknown',
-          city: locationData.city || 'Unknown',
-          latitude: locationData.latitude || null,
-          longitude: locationData.longitude || null,
+          continent: locationData?.continent || 'Unknown',
+          country: locationData?.country || 'Unknown',
+          region: locationData?.region || 'Unknown',
+          city: locationData?.city || 'Unknown',
+          latitude: locationData?.latitude || null,
+          longitude: locationData?.longitude || null,
         },
-        continent: locationData.continent || 'Unknown',
+        continent: locationData?.continent || 'Unknown',
         language,
         status: 'online',
         last_activity: new Date().toISOString(),
@@ -209,46 +257,75 @@ export const useSupabaseChat = (language: string) => {
       if (error) throw error;
       
       console.log('✅ User session initialized successfully');
-
       setCurrentUser(data);
       await updatePresence('online');
       return data;
+      
     } catch (error) {
-      console.error('Error initializing user:', error);
-      setConnectionError('Failed to initialize user session. Please try again.');
+      handleError(error, 'initializeUser');
       return null;
     }
-  }, [language, updatePresence]);
+  }, [language, updatePresence, handleError]);
 
-  // Start chat with location
+  // Start heartbeat system
+  const startHeartbeat = useCallback(() => {
+    if (heartbeatRef.current) {
+      clearInterval(heartbeatRef.current);
+    }
+    
+    console.log('💓 Starting heartbeat system (10s interval)');
+    heartbeatRef.current = setInterval(async () => {
+      if (!isActiveRef.current || !currentUser) return;
+      
+      try {
+        console.log('💓 Sending heartbeat ping...');
+        const { error } = await supabase.rpc('send_heartbeat', { 
+          p_user_id: currentUser.id,
+          p_connection_quality: connectionQuality
+        });
+        
+        if (error) {
+          console.warn('💔 Heartbeat failed:', error.message);
+          // Try to reconnect after 3 failed heartbeats
+          handleDisconnectReconnect();
+        } else {
+          console.log('✅ Heartbeat successful');
+        }
+      } catch (error) {
+        console.warn('💔 Heartbeat error:', error);
+        handleDisconnectReconnect();
+      }
+    }, 10000); // Every 10 seconds
+  }, [currentUser, connectionQuality, handleDisconnectReconnect]);
+
+  // Start chat with comprehensive error handling
   const startChatWithLocation = useCallback(async () => {
     if (!isActiveRef.current) return;
     
-    setIsConnecting(true);
-    setConnectionError(null);
-    setSearchStatus({ 
-      phase: 'joining', 
-      message: '🚀 Starting chat...' 
-    });
-
     try {
       console.log('🚀 Starting chat initialization...');
-      
-      // Try to get location - completely non-blocking
+      setIsConnecting(true);
+      setConnectionError(null);
+      setAppState({ 
+        phase: 'loading', 
+        message: '🚀 Starting chat...' 
+      });
+
+      // Step 1: Get location (non-blocking, 3s max)
       let locationData: any = null;
       try {
-        setSearchStatus({ 
-          phase: 'joining', 
-          message: '📍 Getting location for better matching...' 
+        setAppState({ 
+          phase: 'geolocation', 
+          message: '📍 Getting location for better matching (3s max)...' 
         });
         
-        // Non-blocking location request with built-in timeout
+        console.log('📍 Attempting geolocation (3s timeout)...');
         locationData = await requestLocationNonBlocking();
         
         if (locationData) {
-          console.log('📍 Location obtained successfully:', locationData.continent, locationData.country);
+          console.log('✅ Geolocation success:', locationData.continent, locationData.country);
         } else {
-          console.log('📍 Location unavailable - proceeding with global matching');
+          console.log('📍 Geolocation failed - proceeding with global matching');
         }
       } catch (geoError) {
         console.warn('📍 Geolocation error (non-blocking):', geoError);
@@ -266,51 +343,39 @@ export const useSupabaseChat = (language: string) => {
         };
       }
       
-      // Proceed to user initialization immediately
-      setSearchStatus({ 
-        phase: 'joining', 
+      // Step 2: Initialize user session
+      setAppState({ 
+        phase: 'joining_queue', 
         message: '👤 Initializing user session...' 
       });
 
       const user = await initializeUser(locationData);
-      if (user) {
-        console.log('👤 User initialized, joining waiting queue immediately...');
-        setSearchStatus({ 
-          phase: 'joining', 
-          message: '🔄 Joining waiting queue...' 
-        });
-        // Join matching queue
-        await joinQueue(user.id, user.previous_matches || []);
-      } else {
-        console.error('❌ Failed to initialize user');
-        setConnectionError('Failed to initialize user session. Retrying...');
-        setIsConnecting(false);
-        setSearchStatus({ phase: 'idle', message: '' });
-        setIsConnecting(false);
+      if (!user) {
+        throw new Error('Failed to initialize user session');
       }
+      
+      // Step 3: Join matching queue
+      console.log('👤 User initialized, joining waiting queue...');
+      setAppState({ 
+        phase: 'joining_queue', 
+        message: '🔄 Joining waiting queue...' 
+      });
+      
+      await joinQueue(user.id, user.previous_matches || []);
+      
+      // Step 4: Start heartbeat system
+      startHeartbeat();
+      
+      console.log('✅ Chat initialization completed successfully');
+      
     } catch (error) {
-      console.error('Error starting chat:', error);
-      setConnectionError('Failed to start chat. Please try again.');
+      console.error('❌ Error starting chat:', error);
+      handleError(error, 'startChatWithLocation');
       setIsConnecting(false);
-      setSearchStatus({ phase: 'idle', message: '' });
-      // Auto-retry after 2 seconds
-      setTimeout(() => {
-        if (isActiveRef.current) {
-          console.log('🔄 Auto-retrying connection...');
-          handleDisconnectReconnect();
-        }
-      }, 3000);
     }
-  }, [requestLocationNonBlocking, initializeUser, joinQueue, handleDisconnectReconnect]);
+  }, [requestLocationNonBlocking, initializeUser, joinQueue, startHeartbeat, handleError]);
 
-  // Handle match found
-  useEffect(() => {
-    if (matchResult?.success && matchResult.chat_id && matchResult.partner_id && currentUser && isActiveRef.current) {
-      console.log('🎯 Processing successful match result');
-      handleMatchFound(matchResult);
-    }
-  }, [matchResult, currentUser, currentChat]);
-
+  // Handle match found with error handling
   const handleMatchFound = useCallback(async (match: any) => {
     if (!isActiveRef.current) return;
     
@@ -320,10 +385,11 @@ export const useSupabaseChat = (language: string) => {
       setIsConnecting(false);
       setIsConnected(true);
       setPartnerId(match.partner_id);
-      setSearchStatus({ 
+      setAppState({ 
         phase: 'connected', 
         message: '✅ Connected! Chat is now active' 
       });
+      
       setCurrentChat({ 
         chat_id: match.chat_id,
         user1_id: currentUser?.id,
@@ -365,45 +431,46 @@ export const useSupabaseChat = (language: string) => {
       console.log('✅ Chat activation completed successfully');
       
     } catch (error) {
-      console.error('Error handling match:', error);
-      setConnectionError('Failed to process match. Please try again.');
-      // Try to refresh subscriptions and reconnect
-      refreshSubscriptions();
-      setTimeout(() => {
-        if (isActiveRef.current) {
-          handleDisconnectReconnect();
-        }
-      }, 2000);
+      handleError(error, 'handleMatchFound');
     }
-  }, [refreshSubscriptions, handleDisconnectReconnect]);
+  }, [currentUser, handleError]);
 
-  // Update search status based on queue state
+  // Update app state based on queue state
   useEffect(() => {
     if (isInQueue && isSearching) {
       if (searchAttempts === 0) {
-        setSearchStatus({ 
+        setAppState({ 
           phase: 'searching', 
           message: '🔍 Searching for someone to chat with...',
           details: queuePosition !== null ? `Position in queue: ${queuePosition + 1}` : undefined
         });
       } else {
         const totalWaiting = queueStats?.total_waiting || 0;
-        setSearchStatus({ 
+        setAppState({ 
           phase: 'searching', 
           message: `🔍 Searching for the perfect match... (attempt ${searchAttempts})`,
           details: totalWaiting > 0 ? `${totalWaiting} users online` : 'You might be the first one here!'
         });
       }
     } else if (isInQueue && !isSearching) {
-      setSearchStatus({ 
+      setAppState({ 
         phase: 'searching', 
         message: '⏳ In queue, waiting for matching to start...' 
       });
-    } else if (!isInQueue && !isConnected) {
-      setSearchStatus({ phase: 'idle', message: '' });
+    } else if (!isInQueue && !isConnected && appState.phase !== 'error') {
+      setAppState({ phase: 'idle', message: '' });
     }
-  }, [isInQueue, isSearching, searchAttempts, queueStats, queuePosition]);
-  // Send message
+  }, [isInQueue, isSearching, searchAttempts, queueStats, queuePosition, appState.phase]);
+
+  // Handle match found from queue
+  useEffect(() => {
+    if (matchResult?.success && matchResult.chat_id && matchResult.partner_id && currentUser && isActiveRef.current) {
+      console.log('🎯 Processing successful match result');
+      handleMatchFound(matchResult);
+    }
+  }, [matchResult, currentUser, handleMatchFound]);
+
+  // Send message with error handling
   const sendMessage = useCallback(async (content: string) => {
     if (!currentChat || !currentUser || !content.trim() || !isActiveRef.current) return;
 
@@ -428,7 +495,6 @@ export const useSupabaseChat = (language: string) => {
       
       // Add message to local state immediately
       setMessages(prev => [...prev, data]);
-
       await broadcastMessage(data);
 
       // Update user activity
@@ -438,14 +504,11 @@ export const useSupabaseChat = (language: string) => {
         .eq('id', currentUser.id);
 
     } catch (error) {
-      console.error('Error sending message:', error);
-      setConnectionError('Failed to send message. Please try again.');
-      // Try to refresh connection
-      refreshSubscriptions();
+      handleError(error, 'sendMessage', false);
     }
-  }, [currentChat, currentUser, broadcastMessage, refreshSubscriptions]);
+  }, [currentChat, currentUser, broadcastMessage, handleError]);
 
-  // Skip partner
+  // Skip partner with error handling
   const skipPartner = useCallback(async () => {
     if (!currentChat || !currentUser || !isActiveRef.current) return;
 
@@ -475,37 +538,43 @@ export const useSupabaseChat = (language: string) => {
       setMessages([]);
       setShowNextButton(false);
       setNextButtonCountdown(0);
-      setSearchStatus({ phase: 'idle', message: '' });
+      setAppState({ phase: 'idle', message: '' });
 
       // Rejoin queue for new match
       setTimeout(async () => {
-        await joinQueue(currentUser.id, currentUser.previous_matches || []);
+        if (isActiveRef.current) {
+          await joinQueue(currentUser.id, currentUser.previous_matches || []);
+        }
       }, 500);
     } catch (error) {
-      console.error('Error skipping partner:', error);
-      setConnectionError('Failed to skip partner. Please try again.');
-      handleDisconnectReconnect();
+      handleError(error, 'skipPartner');
     }
-  }, [currentChat, currentUser, leaveQueue, joinQueue, handleDisconnectReconnect]);
+  }, [currentChat, currentUser, leaveQueue, joinQueue, handleError]);
 
   // Handle next button click
   const handleNextClick = useCallback(async () => {
     if (!isActiveRef.current) return;
     
-    console.log('➡️ Next button clicked');
-    setShowNextButton(false);
-    setNextButtonCountdown(0);
-    setSearchStatus({ phase: 'idle', message: '' });
-    
-    if (currentUser) {
-      // Small delay before rejoining
-      setTimeout(() => {
-        joinQueue(currentUser.id, currentUser.previous_matches || []);
-      }, 500);
+    try {
+      console.log('➡️ Next button clicked');
+      setShowNextButton(false);
+      setNextButtonCountdown(0);
+      setAppState({ phase: 'idle', message: '' });
+      
+      if (currentUser) {
+        // Small delay before rejoining
+        setTimeout(() => {
+          if (isActiveRef.current) {
+            joinQueue(currentUser.id, currentUser.previous_matches || []);
+          }
+        }, 500);
+      }
+    } catch (error) {
+      handleError(error, 'handleNextClick', false);
     }
-  }, [currentUser, joinQueue]);
+  }, [currentUser, joinQueue, handleError]);
 
-  // Disconnect
+  // Disconnect with cleanup
   const disconnect = useCallback(async () => {
     console.log('🔌 Disconnecting...');
     isActiveRef.current = false;
@@ -513,6 +582,14 @@ export const useSupabaseChat = (language: string) => {
     if (!currentUser) return;
 
     try {
+      // Clear all timeouts
+      [retryTimeoutRef, nextButtonTimeoutRef, heartbeatRef].forEach(ref => {
+        if (ref.current) {
+          clearTimeout(ref.current);
+          ref.current = null;
+        }
+      });
+
       await leaveQueue();
 
       await supabase
@@ -535,7 +612,7 @@ export const useSupabaseChat = (language: string) => {
     } catch (error) {
       console.error('Error disconnecting:', error);
     }
-  }, [currentUser, currentChat, leaveQueue, updatePresence, handleDisconnectReconnect]);
+  }, [currentUser, currentChat, leaveQueue, updatePresence]);
 
   // Cleanup on unmount
   useEffect(() => {
@@ -543,9 +620,6 @@ export const useSupabaseChat = (language: string) => {
       console.log('🧹 Cleaning up chat hook');
       isActiveRef.current = false;
       disconnect();
-      if (nextButtonTimeoutRef.current) {
-        clearTimeout(nextButtonTimeoutRef.current);
-      }
     };
   }, [disconnect]);
 
@@ -587,11 +661,12 @@ export const useSupabaseChat = (language: string) => {
     queueStats,
     showNextButton,
     nextButtonCountdown,
-    searchStatus,
+    appState, // État explicite pour l'interface
     startChatWithLocation,
     sendMessage,
     skipPartner,
     handleNextClick,
+    handleRetry, // Fonction retry pour l'interface
     disconnect,
     refreshSubscriptions,
   };
