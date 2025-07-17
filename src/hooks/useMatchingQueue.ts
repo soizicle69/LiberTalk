@@ -226,13 +226,14 @@ export const useMatchingQueue = (language: string) => {
   }, []);
 
   // Join queue with enhanced error handling and logging
-  const joinQueue = useCallback(async (userId?: string, previousMatches: string[] = []) => {
+  const joinQueue = useCallback(async (userId?: string, previousMatches: string[] = [], forceLocation: any = null) => {
     if (isInQueue && !userId) {
       console.log('🔄 Already in queue, skipping join...');
       return;
     }
 
     try {
+      console.log('🚀 FORCED QUEUE JOIN: Starting immediately regardless of location status');
       setError(null);
       setIsInQueue(true);
       setIsSearching(true);
@@ -242,10 +243,10 @@ export const useMatchingQueue = (language: string) => {
       setEstimatedWait(null);
       isActiveRef.current = true;
       
-      console.log('🚀 Joining waiting queue immediately with device:', deviceIdRef.current);
+      console.log('🚀 FORCED JOIN: Joining waiting queue with device:', deviceIdRef.current);
 
-      // Use provided location or fallback to global
-      const locationData = location || {
+      // FORCE progression with location data (use provided, current, or fallback)
+      const locationData = forceLocation || location || {
         continent: 'Unknown',
         country: 'Unknown', 
         city: 'Unknown',
@@ -253,12 +254,12 @@ export const useMatchingQueue = (language: string) => {
         longitude: null
       };
       
-      console.log('📍 Using location data:', locationData.continent, locationData.country, locationData.city);
+      console.log('📍 FORCED LOCATION: Using location data (forced progression):', locationData.continent, locationData.country, locationData.city);
 
       // Join waiting queue
       let data, error;
       try {
-        console.log('📡 Calling join_waiting_queue_v2 RPC...');
+        console.log('📡 FORCED RPC: Calling join_waiting_queue_v2 (will retry on fail)...');
         const result = await supabase.rpc('join_waiting_queue_v2', {
           p_device_id: deviceIdRef.current,
           p_continent: locationData?.continent || 'Unknown',
@@ -273,21 +274,42 @@ export const useMatchingQueue = (language: string) => {
         data = result.data;
         error = result.error;
       } catch (rpcError) {
-        console.error('📡 RPC call failed:', rpcError);
-        throw new Error(`RPC call failed: ${rpcError.message || rpcError}`);
+        console.error('📡 FORCED RETRY: RPC call failed, will retry:', rpcError);
+        // Force retry after 2s instead of throwing
+        setTimeout(() => {
+          if (isActiveRef.current) {
+            console.log('🔄 FORCED RETRY: Auto-retrying queue join...');
+            joinQueue(userId, previousMatches, locationData);
+          }
+        }, 2000);
+        return;
       }
 
       if (error) {
-        console.error('📡 RPC returned error:', error);
-        throw new Error(`Queue join failed: ${error.message}`);
+        console.error('📡 FORCED RETRY: RPC returned error, will retry:', error);
+        // Force retry instead of throwing
+        setTimeout(() => {
+          if (isActiveRef.current) {
+            console.log('🔄 FORCED RETRY: Auto-retrying after RPC error...');
+            joinQueue(userId, previousMatches, locationData);
+          }
+        }, 2000);
+        return;
       }
 
       if (!data?.success) {
-        console.error('📡 RPC returned failure:', data);
-        throw new Error(data?.error || 'Failed to join queue');
+        console.error('📡 FORCED RETRY: RPC returned failure, will retry:', data);
+        // Force retry instead of throwing
+        setTimeout(() => {
+          if (isActiveRef.current) {
+            console.log('🔄 FORCED RETRY: Auto-retrying after RPC failure...');
+            joinQueue(userId, previousMatches, locationData);
+          }
+        }, 2000);
+        return;
       }
 
-      console.log('✅ Successfully joined waiting queue:', {
+      console.log('✅ FORCED SUCCESS: Successfully joined waiting queue:', {
         userId: data.user_id,
         sessionId: data.session_id,
         position: data.queue_position,
@@ -304,7 +326,7 @@ export const useMatchingQueue = (language: string) => {
       startMaintenanceIntervals(data.user_id, data.session_id);
       
       // Start search process immediately
-      console.log('🔍 Starting immediate search process...');
+      console.log('🔍 FORCED SEARCH: Starting immediate search process...');
       if (isActiveRef.current) {
         startSearchProcess(data.user_id);
       }
@@ -317,24 +339,15 @@ export const useMatchingQueue = (language: string) => {
       }
       
     } catch (error: any) {
-      console.error('❌ Error joining queue:', error);
+      console.error('❌ FORCED RETRY: Error joining queue, will auto-retry:', error);
       const errorMessage = error?.message || error?.toString() || 'Unknown queue error';
-      setError(`Failed to join waiting queue: ${errorMessage}`);
-      setIsInQueue(false);
-      setIsSearching(false);
-      isActiveRef.current = false;
-      stopAllIntervals();
+      setError(`Retrying queue join: ${errorMessage}`);
       
-      // Show alert for critical queue errors
+      // FORCED auto-retry after 2 seconds on any failure
       setTimeout(() => {
-        alert(`Queue Error: ${errorMessage}\n\nPlease try again or refresh the page.`);
-      }, 100);
-      
-      // Auto-retry after 2 seconds on failure
-      setTimeout(() => {
-        if (!isInQueue) { // Only retry if not already in queue
-          console.log('🔄 Auto-retrying queue join...');
-          joinQueue(userId, previousMatches);
+        if (isActiveRef.current) {
+          console.log('🔄 FORCED RETRY: Auto-retrying queue join after error...');
+          joinQueue(userId, previousMatches, forceLocation);
         }
       }, 2000);
     }
@@ -344,11 +357,14 @@ export const useMatchingQueue = (language: string) => {
   const startSearchProcess = useCallback((userId: string) => {
     let attemptCount = 0;
     let consecutiveFailures = 0;
+    const maxConsecutiveFailures = 5; // Cap at 5 failures
+    const forceGlobalTimeout = 30000; // 30s timeout for global fallback
     let searchInterval: NodeJS.Timeout | null = null;
+    const searchStartTime = Date.now();
     
     const performSearch = async () => {
       if (!isActiveRef.current) {
-        console.log('🛑 Search stopped - not active');
+        console.log('🛑 FORCED STOP: Search stopped - not active');
         if (searchInterval) {
           clearInterval(searchInterval);
           searchInterval = null;
@@ -356,31 +372,44 @@ export const useMatchingQueue = (language: string) => {
         return;
       }
 
+      // FORCE global random match after timeout
+      const elapsedTime = Date.now() - searchStartTime;
+      if (elapsedTime > forceGlobalTimeout) {
+        console.log('⏰ FORCED GLOBAL: 30s timeout reached, forcing global random match...');
+        setError('🌍 Expanding search globally for faster matching...');
+        attemptCount = 0; // Reset counter
+        consecutiveFailures = 0; // Reset failures
+      }
+
       try {
         attemptCount++;
         setSearchAttempts(attemptCount);
-        console.log(`🔍 Search attempt ${attemptCount} for user ${userId}`);
+        console.log(`🔍 FORCED SEARCH: Attempt ${attemptCount} for user ${userId} (${Math.round(elapsedTime/1000)}s elapsed)`);
         
         let data, error;
         try {
-          console.log('📡 Calling find_best_match_v2 RPC...');
+          console.log('📡 FORCED MATCH: Calling find_best_match_v2 RPC...');
           const result = await supabase.rpc('find_best_match_v2', {
             p_user_id: userId
           });
           data = result.data;
           error = result.error;
         } catch (rpcError) {
-          console.error('📡 Match RPC call failed:', rpcError);
-          throw new Error(`Match RPC failed: ${rpcError.message || rpcError}`);
+          console.error('📡 FORCED CONTINUE: Match RPC call failed, continuing search:', rpcError);
+          consecutiveFailures++;
+          // Don't throw, just continue with retry logic
+          data = { success: false, error: rpcError.message || 'RPC failed' };
+          error = null;
         }
 
         if (error) {
-          console.error('📡 Match RPC returned error:', error);
-          throw new Error(`Match search failed: ${error.message}`);
+          console.error('📡 FORCED CONTINUE: Match RPC returned error, continuing search:', error);
+          consecutiveFailures++;
+          // Don't throw, just continue with retry logic
         }
 
         if (data?.success && data.match_id && data.partner_id && isActiveRef.current) {
-          console.log('🎉 Match found! Starting bilateral confirmation:', {
+          console.log('🎉 FORCED SUCCESS: Match found! Starting bilateral confirmation:', {
             matchId: data.match_id,
             partnerId: data.partner_id,
             score: data.match_score,
@@ -406,25 +435,25 @@ export const useMatchingQueue = (language: string) => {
           return;
         }
 
-        // No match found - continue searching
+        // No match found - FORCE continue searching
         if (isActiveRef.current) {
           consecutiveFailures = 0; // Reset on successful search (even if no match)
           
-          // Much faster retry for better responsiveness
-          const retryDelay = Math.min(2000 + (attemptCount * 200), 4000); // 2-4s max
+          // FORCED faster retry for better responsiveness
+          const retryDelay = Math.min(1500 + (attemptCount * 100), 3000); // 1.5-3s max
           
-          console.log(`⏳ No match found, retrying in ${retryDelay/1000}s (attempt ${attemptCount})`);
+          console.log(`⏳ FORCED RETRY: No match found, retrying in ${retryDelay/1000}s (attempt ${attemptCount})`);
           
           if (data?.total_waiting === 0) {
-            setError('🔍 Searching for someone to chat with... You might be the first one here!');
+            setError('🔍 FORCED SEARCH: Looking for someone to chat with... You might be the first one here!');
           } else {
-            setError(`🔍 Searching for the perfect match... ${data?.total_waiting || 0} users online`);
+            setError(`🔍 FORCED SEARCH: Finding the perfect match... ${data?.total_waiting || 0} users online`);
           }
           
-          // Auto-retry after 30s if no match
-          if (attemptCount >= 15) { // After 30s of attempts
-            console.log('⏰ 30s timeout reached, forcing global random match...');
-            setError('🌍 Expanding search globally...');
+          // FORCE global after many attempts
+          if (attemptCount >= 20) { // After many attempts
+            console.log('⏰ FORCED GLOBAL: Many attempts reached, forcing global random match...');
+            setError('🌍 FORCED GLOBAL: Expanding search globally...');
             attemptCount = 0; // Reset counter
           }
           
@@ -436,24 +465,25 @@ export const useMatchingQueue = (language: string) => {
         }
 
       } catch (error: any) {
-        console.error('❌ Search attempt failed:', error);
+        console.error('❌ FORCED CONTINUE: Search attempt failed, continuing anyway:', error);
         consecutiveFailures++;
+        
+        // CAP consecutive failures at 5
+        if (consecutiveFailures > maxConsecutiveFailures) {
+          console.log('🔄 FORCED RESET: Too many consecutive failures, resetting and forcing global search...');
+          consecutiveFailures = 0;
+          attemptCount = 0;
+          setError('🌍 FORCED GLOBAL: Switching to global search for better results...');
+        }
         
         const errorMessage = error?.message || error?.toString() || 'Unknown search error';
         
         if (isActiveRef.current) {
-          // Much faster backoff for better user experience
-          const backoffDelay = Math.min(1000 * Math.pow(1.2, consecutiveFailures), 5000);
-          console.log(`🔄 Retrying search in ${backoffDelay/1000}s (failure ${consecutiveFailures})`);
+          // FORCED faster backoff for better user experience
+          const backoffDelay = Math.min(1000 * Math.pow(1.1, Math.min(consecutiveFailures, maxConsecutiveFailures)), 3000);
+          console.log(`🔄 FORCED RETRY: Retrying search in ${backoffDelay/1000}s (failure ${consecutiveFailures}/${maxConsecutiveFailures})`);
           
-          setError(`🔄 Search error, retrying... (${errorMessage})`);
-          
-          // Show alert for persistent search failures
-          if (consecutiveFailures >= 5) {
-            setTimeout(() => {
-              alert(`Persistent Search Error: ${errorMessage}\n\nPlease check your connection or refresh the page.`);
-            }, 100);
-          }
+          setError(`🔄 FORCED RETRY: Search continuing... (${errorMessage})`);
           
           setTimeout(() => {
             if (isActiveRef.current) {
@@ -465,22 +495,28 @@ export const useMatchingQueue = (language: string) => {
     };
 
     // Start first search attempt immediately
-    console.log('🚀 Starting immediate search process...');
+    console.log('🚀 FORCED START: Starting immediate search process...');
     try {
       performSearch();
     } catch (searchError) {
-      console.error('❌ Failed to start search process:', searchError);
-      setError(`Failed to start search: ${searchError.message || searchError}`);
+      console.error('❌ FORCED CONTINUE: Failed to start search process, will retry:', searchError);
+      setError(`FORCED RETRY: Starting search... (${searchError.message || searchError})`);
+      // Force retry instead of giving up
+      setTimeout(() => {
+        if (isActiveRef.current) {
+          performSearch();
+        }
+      }, 2000);
     }
     
-    // Also set up periodic polling every 2s as backup
+    // FORCED periodic polling every 1.5s as backup
     searchInterval = setInterval(() => {
       if (isActiveRef.current && isSearching) {
-        console.log('🔄 Periodic search poll...');
+        console.log('🔄 FORCED POLL: Periodic search poll...');
         try {
           performSearch();
         } catch (pollError) {
-          console.error('❌ Periodic search poll failed:', pollError);
+          console.error('❌ FORCED CONTINUE: Periodic search poll failed, continuing:', pollError);
         }
       } else if (!isActiveRef.current || !isSearching) {
         if (searchInterval) {
@@ -488,7 +524,7 @@ export const useMatchingQueue = (language: string) => {
           searchInterval = null;
         }
       }
-    }, 2000);
+    }, 1500); // Faster polling
     
     // Cleanup function
     return () => {

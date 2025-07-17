@@ -340,38 +340,38 @@ export const useSupabaseChat = (language: string) => {
     if (!isActiveRef.current) return;
     
     try {
-      console.log('🚀 Starting chat initialization...');
+      console.log('🚀 FORCED START: Starting chat initialization (will proceed regardless)...');
       setIsConnecting(true);
       setConnectionError(null);
       setAppState({ 
         phase: 'loading', 
-        message: '🚀 Starting chat...' 
+        message: '🚀 FORCED START: Starting chat (will proceed regardless)...' 
       });
 
-      // Step 1: Get location (non-blocking, 3s max)
+      // Step 1: FORCED location (non-blocking, 2s max, will proceed regardless)
       let locationData: any = null;
       try {
         setAppState({ 
           phase: 'geolocation', 
-          message: '📍 Getting location for better matching (3s max)...' 
+          message: '📍 FORCED LOCATION: Getting location (2s max, will proceed regardless)...' 
         });
         
-        console.log('📍 Attempting geolocation (3s timeout)...');
-        locationData = await requestLocationNonBlocking(3000);
+        console.log('📍 FORCED LOCATION: Attempting geolocation (2s timeout, will proceed regardless)...');
+        locationData = await requestLocationNonBlocking(2000);
         
         if (locationData) {
-          console.log('✅ Geolocation success:', locationData.continent, locationData.country);
+          console.log('✅ FORCED SUCCESS: Geolocation success:', locationData.continent, locationData.country);
         } else {
-          console.log('📍 Geolocation failed - proceeding with global matching');
+          console.log('📍 FORCED PROGRESSION: Geolocation failed - proceeding with global matching');
         }
       } catch (geoError) {
-        console.warn('📍 Geolocation error (non-blocking):', geoError);
+        console.warn('📍 FORCED PROGRESSION: Geolocation error (non-blocking, proceeding anyway):', geoError);
         locationData = null;
       }
       
-      // Always proceed regardless of location success/failure
+      // FORCED progression regardless of location success/failure
       if (!locationData) {
-        console.log('📍 Using global matching (no location data)');
+        console.log('📍 FORCED GLOBAL: Using global matching (no location data)');
         locationData = {
           continent: 'Unknown',
           country: 'Unknown',
@@ -380,44 +380,69 @@ export const useSupabaseChat = (language: string) => {
         };
       }
       
-      // Step 2: Initialize user session
+      // Handle location error but proceed anyway
+      if (locationError) {
+        console.log('📍 FORCED PROGRESSION: Location error detected, setting null and proceeding:', locationError);
+        locationData = null;
+        setAppState({ 
+          phase: 'joining_queue', 
+          message: '📍 FORCED PROGRESSION: Location unavailable, using global matching...' 
+        });
+      }
+      
+      // Step 2: FORCED user session initialization
       setAppState({ 
         phase: 'joining_queue', 
-        message: '👤 Initializing user session...' 
+        message: '👤 FORCED INIT: Initializing user session (will retry on fail)...' 
       });
 
       const user = await initializeUser(locationData);
       if (!user) {
-        throw new Error('Failed to initialize user session');
+        console.error('❌ FORCED RETRY: Failed to initialize user session, will retry...');
+        // Force retry instead of throwing
+        setTimeout(() => {
+          if (isActiveRef.current) {
+            console.log('🔄 FORCED RETRY: Auto-retrying user initialization...');
+            startChatWithLocation();
+          }
+        }, 2000);
+        return;
       }
       
-      // Step 3: Join matching queue
-      console.log('👤 User initialized, joining waiting queue...');
+      // Step 3: FORCED queue join
+      console.log('👤 FORCED QUEUE: User initialized, joining waiting queue (will retry on fail)...');
       setAppState({ 
         phase: 'joining_queue', 
-        message: '🔄 Joining waiting queue...' 
+        message: '🔄 FORCED QUEUE: Joining waiting queue (will retry on fail)...' 
       });
       
       try {
-        await joinQueue(user.device_id, []);
+        await joinQueue(user.device_id, [], locationData);
       } catch (queueError) {
-        console.error('❌ Failed to join queue:', queueError);
-        throw new Error(`Queue join failed: ${queueError.message || queueError}`);
+        console.error('❌ FORCED RETRY: Failed to join queue, will auto-retry:', queueError);
+        // Don't throw, let joinQueue handle its own retries
+        return;
       }
       
-      // Step 4: Start heartbeat system
+      // Step 4: FORCED heartbeat system
       try {
         startHeartbeat();
       } catch (heartbeatError) {
-        console.warn('⚠️ Failed to start heartbeat, continuing anyway:', heartbeatError);
+        console.warn('⚠️ FORCED CONTINUE: Failed to start heartbeat, continuing anyway:', heartbeatError);
       }
       
-      console.log('✅ Chat initialization completed successfully');
+      console.log('✅ FORCED SUCCESS: Chat initialization completed successfully');
       
     } catch (error) {
-      console.error('❌ Error starting chat:', error);
-      handleError(error, 'startChatWithLocation', true);
+      console.error('❌ FORCED RETRY: Error starting chat, will auto-retry:', error);
+      // Force retry instead of just showing error
       setIsConnecting(false);
+      setTimeout(() => {
+        if (isActiveRef.current) {
+          console.log('🔄 FORCED RETRY: Auto-retrying chat initialization...');
+          startChatWithLocation();
+        }
+      }, 3000);
     }
   }, [requestLocationNonBlocking, initializeUser, joinQueue, startHeartbeat, handleError]);
 
@@ -487,30 +512,36 @@ export const useSupabaseChat = (language: string) => {
 
   // Update app state based on queue state
   useEffect(() => {
+    // Show progress during searching with spinner/timer
     if (isInQueue && isSearching) {
+      const minutes = Math.floor(waitTime / 60);
+      const seconds = waitTime % 60;
+      const timeDisplay = `${minutes}:${seconds.toString().padStart(2, '0')}`;
+      
       if (searchAttempts === 0) {
         setAppState({ 
           phase: 'searching', 
-          message: '🔍 Searching for someone to chat with...',
-          details: queuePosition !== null ? `Position in queue: ${queuePosition + 1}` : undefined
+          message: `🔍 FORCED SEARCH: Searching for someone to chat with... (${timeDisplay})`,
+          details: queuePosition !== null ? `Position: ${queuePosition + 1} | ${queueStats?.total_waiting || 0} users online` : `${queueStats?.total_waiting || 0} users online`
         });
       } else {
         const totalWaiting = queueStats?.total_waiting || 0;
         setAppState({ 
           phase: 'searching', 
-          message: `🔍 Searching for the perfect match... (attempt ${searchAttempts})`,
-          details: totalWaiting > 0 ? `${totalWaiting} users online` : 'You might be the first one here!'
+          message: `🔍 FORCED SEARCH: Finding perfect match... (${timeDisplay} | attempt ${searchAttempts})`,
+          details: totalWaiting > 0 ? `${totalWaiting} users online | Quality: ${connectionQuality}%` : 'You might be the first one here!'
         });
       }
     } else if (isInQueue && !isSearching) {
       setAppState({ 
-        phase: 'searching', 
-        message: '⏳ In queue, waiting for matching to start...' 
+        phase: 'joining_queue', 
+        message: '⏳ FORCED QUEUE: In queue, starting matching soon...',
+        details: 'Preparing search algorithm...'
       });
     } else if (!isInQueue && !isConnected && appState.phase !== 'error') {
       setAppState({ phase: 'idle', message: '' });
     }
-  }, [isInQueue, isSearching, searchAttempts, queueStats, queuePosition, appState.phase]);
+  }, [isInQueue, isSearching, searchAttempts, queueStats, queuePosition, appState.phase, waitTime, connectionQuality]);
 
   // Handle match found from queue
   useEffect(() => {
