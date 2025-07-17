@@ -38,7 +38,7 @@ export const useSupabaseRealtime = ({
       if (Math.random() < 0.1) { // Log only 10% to reduce spam
         console.log('💓 Updating presence:', status);
       }
-      const { error } = await supabase.rpc('send_heartbeat', { 
+      const { error } = await supabase.rpc('send_heartbeat_v2', { 
         p_user_id: userId,
         p_connection_quality: 100
       });
@@ -292,7 +292,7 @@ export const useSupabaseRealtime = ({
             if (Math.random() < 0.2) { // Log only 20% to reduce spam
               console.log('🧹 Running periodic cleanup');
             }
-            await supabase.rpc('cleanup_inactive_sessions');
+            await supabase.rpc('cleanup_inactive_sessions_v2');
           } catch (error) {
             console.warn('🧹 Cleanup failed:', error);
           }

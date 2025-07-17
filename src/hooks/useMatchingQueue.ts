@@ -99,7 +99,7 @@ export const useMatchingQueue = (language: string) => {
     
     try {
       const startTime = Date.now();
-      const { data, error } = await supabase.rpc('send_heartbeat', { 
+      const { data, error } = await supabase.rpc('send_heartbeat_v2', { 
         p_user_id: userId,
         p_connection_quality: connectionQuality
       });
@@ -132,7 +132,7 @@ export const useMatchingQueue = (language: string) => {
     if (!isActiveRef.current) return;
     
     try {
-      const { data, error } = await supabase.rpc('get_queue_statistics');
+      const { data, error } = await supabase.rpc('get_queue_statistics_v2');
       if (error) {
         console.warn('📊 Failed to update queue stats:', error.message);
         return;
@@ -159,7 +159,7 @@ export const useMatchingQueue = (language: string) => {
     if (!isActiveRef.current) return;
     
     try {
-      const { data, error } = await supabase.rpc('cleanup_inactive_sessions');
+      const { data, error } = await supabase.rpc('cleanup_inactive_sessions_v2');
       if (error) {
         console.warn('🧹 Cleanup failed:', error.message);
       } else if (data && (data.cleaned_users > 0 || data.cleaned_sessions > 0)) {
@@ -256,7 +256,7 @@ export const useMatchingQueue = (language: string) => {
       console.log('📍 Using location data:', locationData.continent, locationData.country, locationData.city);
 
       // Join waiting queue
-      const { data, error } = await supabase.rpc('join_waiting_queue', {
+      const { data, error } = await supabase.rpc('join_waiting_queue_v2', {
         p_device_id: deviceIdRef.current,
         p_continent: locationData?.continent || 'Unknown',
         p_country: locationData?.country || 'Unknown',
@@ -340,7 +340,7 @@ export const useMatchingQueue = (language: string) => {
         setSearchAttempts(attemptCount);
         console.log(`🔍 Search attempt ${attemptCount} for user ${userId}`);
         
-        const { data, error } = await supabase.rpc('find_best_match', {
+        const { data, error } = await supabase.rpc('find_best_match_v2', {
           p_user_id: userId
         });
 
@@ -452,7 +452,7 @@ export const useMatchingQueue = (language: string) => {
     
     const confirmMatch = async () => {
       try {
-        const { data, error } = await supabase.rpc('confirm_bilateral_match', {
+        const { data, error } = await supabase.rpc('confirm_bilateral_match_v2', {
           p_user_id: userId,
           p_match_id: matchData.match_id
         });
@@ -548,7 +548,7 @@ export const useMatchingQueue = (language: string) => {
       isActiveRef.current = false;
       
       if (currentUserIdRef.current) {
-        const { data, error } = await supabase.rpc('leave_waiting_queue', {
+        const { data, error } = await supabase.rpc('leave_waiting_queue_v2', {
           p_user_id: currentUserIdRef.current
         });
 
