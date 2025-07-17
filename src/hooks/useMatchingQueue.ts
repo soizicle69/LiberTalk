@@ -540,8 +540,14 @@ export const useMatchingQueue = (language: string) => {
     console.log('⏳ Starting bilateral confirmation process');
     setError('🤝 Match found! Confirming connection...');
     
+    let confirmAttempts = 0;
+    const maxConfirmAttempts = 10;
+    
     const confirmMatch = async () => {
       try {
+        confirmAttempts++;
+        console.log(`🤝 Confirmation attempt ${confirmAttempts}/${maxConfirmAttempts}`);
+        
         const { data, error } = await supabase.rpc('confirm_bilateral_match_v2', {
           p_user_id: userId,
           p_match_id: matchData.match_id
@@ -579,15 +585,28 @@ export const useMatchingQueue = (language: string) => {
         }
 
         if (data?.success && !data.both_confirmed) {
-          console.log('⏳ Waiting for partner confirmation...');
+          console.log(`⏳ Waiting for partner confirmation... (${confirmAttempts}/${maxConfirmAttempts})`);
           setError('⏳ Waiting for partner to confirm connection...');
           
-          // Continue waiting for partner confirmation
-          setTimeout(() => {
-            if (isActiveRef.current) {
-              confirmMatch();
-            }
-          }, 1000);
+          // Continue waiting for partner confirmation with attempt limit
+          if (confirmAttempts < maxConfirmAttempts) {
+            setTimeout(() => {
+              if (isActiveRef.current) {
+                confirmMatch();
+              }
+            }, 1000); // Poll every 1 second
+          } else {
+            console.log('⏰ Max confirmation attempts reached, restarting search...');
+            setError('⏰ Partner confirmation timeout, searching for another match...');
+            
+            // Fallback to re-search
+            setTimeout(() => {
+              if (isActiveRef.current) {
+                setIsSearching(true);
+                startSearchProcess(userId);
+              }
+            }, 2000);
+          }
           return;
         }
 
@@ -596,6 +615,20 @@ export const useMatchingQueue = (language: string) => {
       } catch (error: any) {
         console.error('❌ Bilateral confirmation failed:', error);
         
+        if (confirmAttempts >= maxConfirmAttempts) {
+          console.log('⏰ Max confirmation attempts reached, restarting search...');
+          setError('⏰ Connection failed after multiple attempts, searching for another match...');
+          
+          // Restart search process
+          setTimeout(() => {
+            if (isActiveRef.current) {
+              setIsSearching(true);
+              startSearchProcess(userId);
+            }
+          }, 2000);
+          return;
+        }
+
         if (error.message.includes('timeout')) {
           console.log('⏰ Bilateral confirmation timeout, restarting search...');
           setError('⏰ Connection timeout, searching for another match...');
@@ -608,12 +641,12 @@ export const useMatchingQueue = (language: string) => {
             }
           }, 2000);
         } else {
-          setError(`🔄 Connection failed, retrying... (${error.message})`);
+          setError(`🔄 Connection failed, retrying... (${confirmAttempts}/${maxConfirmAttempts})`);
           setTimeout(() => {
             if (isActiveRef.current) {
               confirmMatch();
             }
-          }, 3000);
+          }, 1000);
         }
       }
     };

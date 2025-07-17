@@ -148,14 +148,21 @@ export const useSupabaseChat = (language: string) => {
       };
       setMessages(prev => [...prev, disconnectMessage]);
       
-      // Show "Next" button with 3s countdown
+      // Show "Next" button with 5s countdown, then auto-skip
       setShowNextButton(true);
-      setNextButtonCountdown(3);
+      setNextButtonCountdown(5);
       
       const countdownInterval = setInterval(() => {
         setNextButtonCountdown(prev => {
           if (prev <= 1) {
             clearInterval(countdownInterval);
+            // Auto-skip partner after countdown
+            console.log('⏭️ Auto-skipping partner after countdown');
+            setTimeout(() => {
+              if (isActiveRef.current && showNextButton) {
+                skipPartner();
+              }
+            }, 100);
             return 0;
           }
           return prev - 1;
@@ -165,7 +172,7 @@ export const useSupabaseChat = (language: string) => {
     } catch (error) {
       handleError(error, 'handleUserDisconnected');
     }
-  }, [currentChat, handleError]);
+  }, [currentChat, handleError, showNextButton, skipPartner]);
 
   const handleChatUpdate = useCallback((chat: any) => {
     if (!isActiveRef.current) return;
@@ -698,12 +705,30 @@ export const useSupabaseChat = (language: string) => {
 
   // Cleanup on unmount
   useEffect(() => {
+    // Handle page unload/refresh
+    const handleBeforeUnload = () => {
+      console.log('🔌 Page unloading, disconnecting...');
+      isActiveRef.current = false;
+      if (currentUser) {
+        // Synchronous disconnect for page unload
+        navigator.sendBeacon?.('/api/disconnect', JSON.stringify({ userId: currentUser.id })) ||
+        fetch('/api/disconnect', { 
+          method: 'POST', 
+          body: JSON.stringify({ userId: currentUser.id }),
+          keepalive: true 
+        }).catch(() => {});
+      }
+    };
+    
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    
     return () => {
       console.log('🧹 Cleaning up chat hook');
+      window.removeEventListener('beforeunload', handleBeforeUnload);
       isActiveRef.current = false;
       disconnect();
     };
-  }, [disconnect]);
+  }, [disconnect, currentUser]);
 
   // Handle page visibility changes
   useEffect(() => {

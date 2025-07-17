@@ -29,6 +29,7 @@ export const useSupabaseRealtime = ({
   const isActiveRef = useRef<boolean>(true);
   const reconnectAttemptsRef = useRef<number>(0);
   const maxReconnectAttempts = 10;
+  const baseReconnectDelay = 1000; // 1 second base delay
 
   // Enhanced presence update with heartbeat
   const updatePresence = useCallback(async (status: 'online' | 'offline' | 'away' = 'online') => {
@@ -54,10 +55,10 @@ export const useSupabaseRealtime = ({
     } catch (error) {
       console.warn('💔 Error updating presence:', error);
       
-      // Auto-reconnect logic
+      // Auto-reconnect logic with exponential backoff
       if (reconnectAttemptsRef.current < maxReconnectAttempts) {
         reconnectAttemptsRef.current++;
-        const delay = Math.min(1000 * reconnectAttemptsRef.current, 10000);
+        const delay = Math.min(baseReconnectDelay * Math.pow(2, reconnectAttemptsRef.current - 1), 30000);
         console.log(`🔄 Attempting reconnect ${reconnectAttemptsRef.current}/${maxReconnectAttempts} in ${delay}ms`);
         setTimeout(() => updatePresence(status), delay);
       }
@@ -220,8 +221,27 @@ export const useSupabaseRealtime = ({
             try {
               if (key !== userId) {
                 console.log('👋 User left presence:', key);
-                console.log('🚪 Partner may have disconnected, checking...');
-                onUserDisconnected?.();
+                console.log('🚪 Partner may have disconnected, confirming...');
+                
+                // Confirm disconnection with RPC before triggering disconnect
+                setTimeout(async () => {
+                  if (!isActiveRef.current) return;
+                  try {
+                    const { data, error } = await supabase.rpc('check_user_status', {
+                      p_user_id: key
+                    });
+                    
+                    if (error || !data?.is_active) {
+                      console.log('✅ Confirmed: Partner disconnected');
+                      onUserDisconnected?.();
+                    } else {
+                      console.log('ℹ️ False alarm: Partner still active');
+                    }
+                  } catch (confirmError) {
+                    console.warn('⚠️ Could not confirm disconnect, assuming disconnected:', confirmError);
+                    onUserDisconnected?.();
+                  }
+                }, 2000); // 2 second grace period
               }
               onPresenceUpdate?.({ type: 'leave', key, presences: leftPresences });
             } catch (error) {
@@ -280,7 +300,7 @@ export const useSupabaseRealtime = ({
           } catch (error) {
             console.warn('💔 Heartbeat failed:', error);
           }
-        }, 5000); // Every 5 seconds for keep-alive (reduced from 10s)
+        }, 3000); // Every 3 seconds for keep-alive (reduced from 5s)
 
         // Setup cleanup interval - reduced frequency
         if (cleanupRef.current) {
@@ -482,7 +502,8 @@ export const useSupabaseRealtime = ({
       await matchingChannelRef.current.send({
         type: 'broadcast',
         event: 'match_found',
-        payload: matchData
+        payload: matchData,
+        config: { self: false } // Ensure partner receives but not self
       });
     } catch (error) {
       console.warn('⚠️ Failed to broadcast match:', error);
