@@ -308,15 +308,15 @@ export const useSupabaseChat = (language: string) => {
       }
       
       const userData = {
-        device_id: deviceId,
-        continent: locationData?.continent || 'Unknown',
-        country: locationData?.country || 'Unknown',
-        city: locationData?.city || 'Unknown',
-        language,
-        latitude: locationData?.latitude || null,
-        longitude: locationData?.longitude || null,
-        user_agent: navigator.userAgent,
-        ip_address: null // Will be detected server-side
+        p_device_id: deviceId,
+        p_continent: locationData?.continent || 'Unknown',
+        p_country: locationData?.country || 'Unknown',
+        p_city: locationData?.city || 'Unknown',
+        p_language: language,
+        p_latitude: locationData?.latitude || null,
+        p_longitude: locationData?.longitude || null,
+        p_user_agent: navigator.userAgent,
+        p_ip_address: null // Will be detected server-side
       };
 
       console.log('💾 Inserting user data:', userData);
