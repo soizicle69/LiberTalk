@@ -308,6 +308,7 @@ export const useSupabaseChat = (language: string) => {
       
       const userData = {
         id: deviceId,
+        continent: locationData?.continent || 'Unknown',
         location: locationData?.latitude && locationData?.longitude 
           ? `POINT(${locationData.longitude} ${locationData.latitude})`
           : null,
